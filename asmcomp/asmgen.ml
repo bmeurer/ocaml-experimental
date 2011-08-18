@@ -42,16 +42,29 @@ let rec regalloc ppf round fd =
     fatal_error(fd.Mach.fun_name ^
                 ": function too complex, cannot complete register allocation");
   dump_if ppf dump_live "Liveness analysis" fd;
-  Interf.build_graph fd;
-  if !dump_interf then Printmach.interferences ppf ();
-  if !dump_prefer then Printmach.preferences ppf ();
-  Coloring.allocate_registers();
-  dump_if ppf dump_regalloc "After register allocation" fd;
-  let (newfd, redo_regalloc) = Reload.fundecl fd in
-  dump_if ppf dump_reload "After insertion of reloading code" newfd;
-  if redo_regalloc then begin
-    Reg.reinit(); Liveness.fundecl ppf newfd; regalloc ppf (round + 1) newfd
-  end else newfd
+  if !use_linscan  then begin
+    Interval.build_intervals fd;
+    if !dump_interval then Interval.debug_intervals ppf fd;
+    Linscan.walk_intervals (Interval.all_intervals ()) (Interval.all_fixed_intervals()) fd;
+    dump_if ppf dump_regalloc "After register allocation" fd;
+    let (newfd, redo_regalloc) = Reload.fundecl fd in
+    dump_if ppf dump_reload "After insertion of reloading code" newfd;
+    if redo_regalloc then begin
+      Reg.reinit(); Liveness.fundecl ppf newfd; regalloc ppf (round + 1) newfd
+    end else newfd
+  end
+  else begin 
+    Interf.build_graph fd;
+    if !dump_interf then Printmach.interferences ppf ();
+    if !dump_prefer then Printmach.preferences ppf ();
+    Coloring.allocate_registers();
+    dump_if ppf dump_regalloc "After register allocation" fd;
+    let (newfd, redo_regalloc) = Reload.fundecl fd in
+    dump_if ppf dump_reload "After insertion of reloading code" newfd;
+    if redo_regalloc then begin
+      Reg.reinit(); Liveness.fundecl ppf newfd; regalloc ppf (round + 1) newfd
+    end else newfd
+  end
 
 let (++) x f = f x
 

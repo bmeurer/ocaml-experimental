@@ -142,6 +142,8 @@ module Options = Main_args.Make_optcomp_options (struct
   let _warn_help = Warnings.help_warnings
   let _where () = print_standard_library ()
 
+  let _linscan = set use_linscan
+
   let _nopervasives = set nopervasives
   let _dparsetree = set dump_parsetree
   let _drawlambda = set dump_rawlambda
@@ -158,6 +160,7 @@ module Options = Main_args.Make_optcomp_options (struct
   let _dreload = set dump_reload
   let _dscheduling = set dump_scheduling
   let _dlinear = set dump_linear
+  let _dinterval = set dump_interval
   let _dstartup = set keep_startup_file
 
   let anonymous = anonymous

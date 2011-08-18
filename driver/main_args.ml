@@ -298,6 +298,11 @@ let mk_use_prims f =
   "-use-prims", Arg.String f, "<file>  (undocumented)"
 ;;
 
+let mk_linscan f =
+  "-linscan", Arg.Unit f, " (undocumented)"
+;;
+
+
 let mk_dparsetree f =
   "-dparsetree", Arg.Unit f, " (undocumented)"
 ;;
@@ -361,6 +366,11 @@ let mk_dscheduling f =
 let mk_dlinear f =
   "-dlinear", Arg.Unit f, " (undocumented)"
 ;;
+
+let mk_dinterval f =
+  "-dinterval", Arg.Unit f, " (undocumented)"
+;;
+
 
 let mk_dstartup f =
   "-dstartup", Arg.Unit f, " (undocumented)"
@@ -499,6 +509,8 @@ module type Optcomp_options = sig
   val _warn_help : unit -> unit
   val _where : unit -> unit
 
+  val _linscan : unit -> unit
+
   val _nopervasives : unit -> unit
   val _dparsetree : unit -> unit
   val _drawlambda : unit -> unit
@@ -515,6 +527,7 @@ module type Optcomp_options = sig
   val _dreload : unit -> unit
   val _dscheduling :  unit -> unit
   val _dlinear :  unit -> unit
+  val _dinterval :  unit -> unit
   val _dstartup :  unit -> unit
 
   val anonymous : string -> unit
@@ -542,6 +555,8 @@ module type Opttop_options = sig
   val _warn_error : string -> unit
   val _warn_help : unit -> unit
 
+  val _linscan : unit -> unit
+
   val _dparsetree : unit -> unit
   val _drawlambda : unit -> unit
   val _dlambda : unit -> unit
@@ -557,6 +572,7 @@ module type Opttop_options = sig
   val _dreload : unit -> unit
   val _dscheduling :  unit -> unit
   val _dlinear :  unit -> unit
+  val _dinterval :  unit -> unit
   val _dstartup :  unit -> unit
 
   val anonymous : string -> unit
@@ -709,6 +725,8 @@ struct
     mk_warn_help F._warn_help;
     mk_where F._where;
 
+    mk_linscan F._linscan;
+
     mk_nopervasives F._nopervasives;
     mk_dparsetree F._dparsetree;
     mk_drawlambda F._drawlambda;
@@ -718,12 +736,14 @@ struct
     mk_dcombine F._dcombine;
     mk_dlive F._dlive;
     mk_dspill F._dspill;
+    mk_dsplit F._dspill;
     mk_dinterf F._dinterf;
     mk_dprefer F._dprefer;
     mk_dalloc F._dalloc;
     mk_dreload F._dreload;
     mk_dscheduling F._dscheduling;
     mk_dlinear F._dlinear;
+    mk_dinterval F._dinterval;
     mk_dstartup F._dstartup;
 
     mk__ F.anonymous;
@@ -753,6 +773,8 @@ module Make_opttop_options (F : Opttop_options) = struct
     mk_warn_error F._warn_error;
     mk_warn_help F._warn_help;
 
+    mk_linscan F._linscan;
+
     mk_dparsetree F._dparsetree;
     mk_drawlambda F._drawlambda;
     mk_dcmm F._dcmm;
@@ -760,12 +782,14 @@ module Make_opttop_options (F : Opttop_options) = struct
     mk_dcombine F._dcombine;
     mk_dlive F._dlive;
     mk_dspill F._dspill;
+    mk_dsplit F._dspill;
     mk_dinterf F._dinterf;
     mk_dprefer F._dprefer;
     mk_dalloc F._dalloc;
     mk_dreload F._dreload;
     mk_dscheduling F._dscheduling;
     mk_dlinear F._dlinear;
+    mk_dinterval F._dinterval;
     mk_dstartup F._dstartup;
 
     mk__ F.anonymous;

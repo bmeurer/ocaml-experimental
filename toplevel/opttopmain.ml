@@ -85,6 +85,8 @@ module Options = Main_args.Make_opttop_options (struct
   let _warn_error s = Warnings.parse_options true s
   let _warn_help = Warnings.help_warnings
 
+  let _linscan = set use_linscan
+
   let _dparsetree = set dump_parsetree
   let _drawlambda = set dump_rawlambda
   let _dlambda = set dump_lambda
@@ -100,6 +102,7 @@ module Options = Main_args.Make_opttop_options (struct
   let _dreload = set dump_reload
   let _dscheduling = set dump_scheduling
   let _dlinear = set dump_linear
+  let _dinterval = set dump_interval
   let _dstartup = set keep_startup_file
 
   let anonymous = file_argument

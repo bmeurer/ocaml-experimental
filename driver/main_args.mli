@@ -142,6 +142,8 @@ module type Optcomp_options = sig
   val _warn_help : unit -> unit
   val _where : unit -> unit
 
+  val _linscan : unit -> unit
+
   val _nopervasives : unit -> unit
   val _dparsetree : unit -> unit
   val _drawlambda : unit -> unit
@@ -158,6 +160,7 @@ module type Optcomp_options = sig
   val _dreload : unit -> unit
   val _dscheduling :  unit -> unit
   val _dlinear :  unit -> unit
+  val _dinterval :  unit -> unit
   val _dstartup :  unit -> unit
 
   val anonymous : string -> unit
@@ -185,6 +188,8 @@ module type Opttop_options = sig
   val _warn_error : string -> unit
   val _warn_help : unit -> unit
 
+  val _linscan : unit -> unit
+
   val _dparsetree : unit -> unit
   val _drawlambda : unit -> unit
   val _dlambda : unit -> unit
@@ -200,6 +205,7 @@ module type Opttop_options = sig
   val _dreload : unit -> unit
   val _dscheduling :  unit -> unit
   val _dlinear :  unit -> unit
+  val _dinterval :  unit -> unit
   val _dstartup :  unit -> unit
 
   val anonymous : string -> unit

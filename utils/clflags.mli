@@ -23,6 +23,7 @@ val print_types : bool ref
 val make_archive : bool ref
 val debug : bool ref
 val fast : bool ref
+val use_linscan : bool ref
 val link_everything : bool ref
 val custom_runtime : bool ref
 val output_c_object : bool ref
@@ -67,6 +68,7 @@ val dump_regalloc : bool ref
 val dump_reload : bool ref
 val dump_scheduling : bool ref
 val dump_linear : bool ref
+val dump_interval : bool ref
 val keep_startup_file : bool ref
 val dump_combine : bool ref
 val native_code : bool ref
