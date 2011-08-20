@@ -242,6 +242,15 @@ method! select_operation op args =
   | Cextcall(fn, ty_res, false, dbg)
     when !fast_math && List.mem fn inline_float_ops ->
       (Ispecific(Ifloatspecial fn), args)
+  (* Recognize checkbound with memory and immediate. *)
+  | Ccheckbound _ ->
+      begin match args with
+        [Cop(Cload _, [loc]); Cconst_int n] when self#is_immediate n ->
+          let (addr, arg) = self#select_addressing loc in
+          (Ispecific(Icheckboundmem_imm(n, addr)), [arg])
+      | _ ->
+          super#select_operation op args
+      end
   (* Default *)
   | _ -> super#select_operation op args
 

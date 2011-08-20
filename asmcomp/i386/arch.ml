@@ -47,6 +47,8 @@ type specific_operation =
                                         (* Float arith operation with memory *)
                                         (* bool: true=64 bits, false=32 *)
   | Ifloatspecial of string
+  | Icheckboundmem_imm of int * addressing_mode
+                           (* Check bounds with memory and integer constant *)
 
 and float_operation =
     Ifloatadd | Ifloatsub | Ifloatsubrev | Ifloatmul | Ifloatdiv | Ifloatdivrev
@@ -144,6 +146,8 @@ let print_specific_operation printreg op ppf arg =
         if i > 0 then fprintf ppf ", ";
         printreg ppf arg.(i)
       done
+  | Icheckboundmem_imm(n, addr) ->
+      fprintf ppf "%a check > %i" (print_addressing printreg addr) arg n
 
 (* Stack alignment constraints *)
 
