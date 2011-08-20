@@ -1028,27 +1028,34 @@ let rec transl = function
   | Ufor(id, low, high, dir, body) ->
       let tst = match dir with Upto -> Cgt   | Downto -> Clt in
       let inc = match dir with Upto -> Caddi | Downto -> Csubi in
-      let raise_num = next_raise_count () in
-      let id_prev = Ident.rename id in
-      return_unit
-        (Clet
-           (id, transl low,
-            bind_nonvar "bound" (transl high) (fun high ->
-              Ccatch
-                (raise_num, [],
-                 Cifthenelse
-                   (Cop(Ccmpi tst, [Cvar id; high]), Cexit (raise_num, []),
-                    Cloop
-                      (Csequence
-                         (remove_unit(transl body),
-                         Clet(id_prev, Cvar id,
-                          Csequence
-                            (Cassign(id,
-                               Cop(inc, [Cvar id; Cconst_int 2])),
-                             Cifthenelse
-                               (Cop(Ccmpi Ceq, [Cvar id_prev; high]),
-                                Cexit (raise_num,[]), Ctuple [])))))),
-                 Ctuple []))))
+      let loop high =
+        let raise_num = next_raise_count () in
+        Ccatch
+          (raise_num, [],
+           Cloop
+             (Csequence
+                (remove_unit (transl body),
+                   (Cifthenelse
+                      (Cop(Ccmpi Ceq, [Cvar id; high]),
+                       Cexit(raise_num, []),
+                       Cassign(id, Cop(inc, [Cvar id; Cconst_int 2])))))),
+           Ctuple [])
+      in begin match transl low, transl high with
+        (Cconst_int l as low), (Cconst_int h as high) ->
+          if (dir = Upto && l <= h) || (dir = Downto && l >= h) then
+            return_unit (Clet(id, low, loop high))
+          else
+            return_unit (Ctuple [])
+      | low, high ->
+          return_unit
+            (Clet
+               (id, low,
+                bind_nonvar "bound" high (fun high ->
+                  Cifthenelse
+                    (Cop(Ccmpi tst, [Cvar id; high]),
+                     Ctuple [],
+                     loop high))))
+      end
   | Uassign(id, exp) ->
       return_unit(Cassign(id, transl exp))
 
