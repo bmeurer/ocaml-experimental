@@ -40,6 +40,8 @@ type specific_operation =
   | Ioffset_loc of int * addressing_mode (* Add a constant to a location *)
   | Ifloatarithmem of float_operation * addressing_mode
                                        (* Float arith operation with memory *)
+  | Icheckboundmem_imm of int * addressing_mode
+                           (* Check bounds with memory and integer constant *)
 and float_operation =
     Ifloatadd | Ifloatsub | Ifloatmul | Ifloatdiv
 
@@ -109,3 +111,5 @@ let print_specific_operation printreg op ppf arg =
       fprintf ppf "%a %s float64[%a]" printreg arg.(0) (op_name op)
                    (print_addressing printreg addr)
                    (Array.sub arg 1 (Array.length arg - 1))
+  | Icheckboundmem_imm(n, addr) ->
+      fprintf ppf "%a check > %i" (print_addressing printreg addr) arg n

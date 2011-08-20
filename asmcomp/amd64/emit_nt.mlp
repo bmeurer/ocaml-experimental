@@ -480,6 +480,10 @@ let emit_instr fallthrough i =
         let lbl = bound_error_label i.dbg in
         `	cmp	{emit_reg i.arg.(0)}, {emit_int n}\n`;
         `	jbe	{emit_label lbl}\n`
+    | Lop(Ispecific(Icheckboundmem_imm(n, addr))) ->
+        let lbl = bound_error_label i.dbg in
+        `	cmp	QWORD PTR {emit_addressing addr i.arg 0}, {emit_int n}\n`;
+        `	jbe	{emit_label lbl}\n`
     | Lop(Iintop(Idiv | Imod)) ->
         `	cqo\n`;
         `	idiv	{emit_reg i.arg.(1)}\n`
