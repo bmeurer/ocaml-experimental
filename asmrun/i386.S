@@ -105,10 +105,29 @@ LBL(105):
         pushl   %ebx
         pushl   %eax
         movl    %esp, G(caml_gc_regs)
+    /* Save floating-point registers */
+        subl    $(8*8), %esp
+        movsd   %xmm0, 0*8(%esp)
+        movsd   %xmm1, 1*8(%esp)
+        movsd   %xmm2, 2*8(%esp)
+        movsd   %xmm3, 3*8(%esp)
+        movsd   %xmm4, 4*8(%esp)
+        movsd   %xmm5, 5*8(%esp)
+        movsd   %xmm6, 6*8(%esp)
+        movsd   %xmm7, 7*8(%esp)
         /* MacOSX note: 16-alignment of stack preserved at this point */
     /* Call the garbage collector */
         call    G(caml_garbage_collection)
     /* Restore all regs used by the code generator */
+        movsd   0*8(%esp), %xmm0
+        movsd   1*8(%esp), %xmm1
+        movsd   2*8(%esp), %xmm2
+        movsd   3*8(%esp), %xmm3
+        movsd   4*8(%esp), %xmm4
+        movsd   5*8(%esp), %xmm5
+        movsd   6*8(%esp), %xmm6
+        movsd   7*8(%esp), %xmm7
+        addl    $(8*8), %esp
         popl    %eax
         popl    %ebx
         popl    %ecx

@@ -14,11 +14,7 @@
 
 (* Machine-specific command-line options *)
 
-let fast_math = ref false
-
-let command_line_options =
-  [ "-ffast-math", Arg.Set fast_math,
-      " Inline trigonometric and exponential functions" ]
+let command_line_options = []
 
 (* Specific operations for the Intel 386 processor *)
 
@@ -42,14 +38,11 @@ type specific_operation =
   | Ipush_symbol of string              (* Push a symbol *)
   | Ipush_load of addressing_mode       (* Load a scalar and push *)
   | Ipush_load_float of addressing_mode (* Load a float and push *)
-  | Isubfrev | Idivfrev                 (* Reversed float sub and div *)
-  | Ifloatarithmem of bool * float_operation * addressing_mode
+  | Ifloatarithmem of float_operation * addressing_mode
                                         (* Float arith operation with memory *)
-                                        (* bool: true=64 bits, false=32 *)
-  | Ifloatspecial of string
 
 and float_operation =
-    Ifloatadd | Ifloatsub | Ifloatsubrev | Ifloatmul | Ifloatdiv | Ifloatdivrev
+    Ifloatadd | Ifloatsub | Ifloatmul | Ifloatdiv
 
 (* Sizes, endianness *)
 
@@ -123,27 +116,14 @@ let print_specific_operation printreg op ppf arg =
       fprintf ppf "push [%a]" (print_addressing printreg addr) arg
   | Ipush_load_float addr ->
       fprintf ppf "pushfloat [%a]" (print_addressing printreg addr) arg
-  | Isubfrev ->
-      fprintf ppf "%a -f(rev) %a" printreg arg.(0) printreg arg.(1)
-  | Idivfrev ->
-      fprintf ppf "%a /f(rev) %a" printreg arg.(0) printreg arg.(1)
-  | Ifloatarithmem(double, op, addr) ->
+  | Ifloatarithmem(op, addr) ->
       let op_name = function
       | Ifloatadd -> "+f"
       | Ifloatsub -> "-f"
-      | Ifloatsubrev -> "-f(rev)"
       | Ifloatmul -> "*f"
       | Ifloatdiv -> "/f"
-      | Ifloatdivrev -> "/f(rev)" in
-      let long = if double then "float64" else "float32" in
-      fprintf ppf "%a %s %s[%a]" printreg arg.(0) (op_name op) long
+      in fprintf ppf "%a %s float64[%a]" printreg arg.(0) (op_name op)
        (print_addressing printreg addr) (Array.sub arg 1 (Array.length arg - 1))
-  | Ifloatspecial name ->
-      fprintf ppf "%s " name;
-      for i = 0 to Array.length arg - 1 do
-        if i > 0 then fprintf ppf ", ";
-        printreg ppf arg.(i)
-      done
 
 (* Stack alignment constraints *)
 

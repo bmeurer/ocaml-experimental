@@ -256,41 +256,17 @@ let instr_for_intop = function
   | _ -> fatal_error "Emit_i386: instr_for_intop"
 
 let instr_for_floatop = function
-    Inegf -> "fchs"
-  | Iabsf -> "fabs"
-  | Iaddf -> "faddl"
-  | Isubf -> "fsubl"
-  | Imulf -> "fmull"
-  | Idivf -> "fdivl"
-  | Ispecific Isubfrev -> "fsubrl"
-  | Ispecific Idivfrev -> "fdivrl"
+    Iaddf -> "addsd"
+  | Isubf -> "subsd"
+  | Imulf -> "mulsd"
+  | Idivf -> "divsd"
   | _ -> fatal_error "Emit_i386: instr_for_floatop"
 
-let instr_for_floatop_reversed = function
-    Iaddf -> "faddl"
-  | Isubf -> "fsubrl"
-  | Imulf -> "fmull"
-  | Idivf -> "fdivrl"
-  | Ispecific Isubfrev -> "fsubl"
-  | Ispecific Idivfrev -> "fdivl"
-  | _ -> fatal_error "Emit_i386: instr_for_floatop_reversed"
-
-let instr_for_floatop_pop = function
-    Iaddf -> "faddp"
-  | Isubf -> "fsubp"
-  | Imulf -> "fmulp"
-  | Idivf -> "fdivp"
-  | Ispecific Isubfrev -> "fsubrp"
-  | Ispecific Idivfrev -> "fdivrp"
-  | _ -> fatal_error "Emit_i386: instr_for_floatop_pop"
-
-let instr_for_floatarithmem double = function
-    Ifloatadd -> if double then "faddl" else "fadds"
-  | Ifloatsub -> if double then "fsubl" else "fsubs"
-  | Ifloatsubrev -> if double then "fsubrl" else "fsubrs"
-  | Ifloatmul -> if double then "fmull" else "fmuls"
-  | Ifloatdiv -> if double then "fdivl" else "fdivs"
-  | Ifloatdivrev -> if double then "fdivrl" else "fdivrs"
+let instr_for_floatarithmem = function
+    Ifloatadd -> "addsd"
+  | Ifloatsub -> "subsd"
+  | Ifloatmul -> "mulsd"
+  | Ifloatdiv -> "divsd"
 
 let name_for_cond_branch = function
     Isigned Ceq -> "e"     | Isigned Cne -> "ne"
@@ -313,92 +289,53 @@ let output_epilogue () =
   let n = frame_size() - 4 in
   if n > 0 then `	addl	${emit_int n}, %esp\n`
 
-(* Determine if the given register is the top of the floating-point stack *)
-
-let is_tos = function { loc = Reg _; typ = Float } -> true | _ -> false
-
 (* Emit the code for a floating-point comparison *)
 
 let emit_float_test cmp neg arg lbl =
-  let actual_cmp =
-    match (is_tos arg.(0), is_tos arg.(1)) with
-      (true, true) ->
-      (* both args on top of FP stack *)
-      `	fcompp\n`;
-      cmp
-    | (true, false) ->
-      (* first arg on top of FP stack *)
-      `	fcompl	{emit_reg arg.(1)}\n`;
-      cmp
-    | (false, true) ->
-      (* second arg on top of FP stack *)
-      `	fcompl	{emit_reg arg.(0)}\n`;
-      Cmm.swap_comparison cmp
-    | (false, false) ->
-      `	fldl	{emit_reg arg.(0)}\n`;
-      `	fcompl	{emit_reg arg.(1)}\n`;
-      cmp
-    in
-  `	fnstsw	%ax\n`;
-  begin match actual_cmp with
-    Ceq ->
-      if neg then begin
-      `	andb	$68, %ah\n`;
-      `	xorb	$64, %ah\n`;
-      `	jne	`
-      end else begin
-      `	andb	$69, %ah\n`;
-      `	cmpb	$64, %ah\n`;
-      `	je	`
-      end
-  | Cne ->
-      if neg then begin
-      `	andb	$69, %ah\n`;
-      `	cmpb	$64, %ah\n`;
-      `	je	`
-      end else begin
-      `	andb	$68, %ah\n`;
-      `	xorb	$64, %ah\n`;
-      `	jne	`
-      end
-  | Cle ->
-      `	andb	$69, %ah\n`;
-      `	decb	%ah\n`;
-      `	cmpb	$64, %ah\n`;
-      if neg
-      then `	jae	`
-      else `	jb	`
-  | Cge ->
-      `	andb	$5, %ah\n`;
-      if neg
-      then `	jne	`
-      else `	je	`
-  | Clt ->
-      `	andb	$69, %ah\n`;
-      `	cmpb	$1, %ah\n`;
-      if neg
-      then `	jne	`
-      else `	je	`
-  | Cgt ->
-      `	andb	$69, %ah\n`;
-      if neg
-      then `	jne	`
-      else `	je	`
-  end;
-  `{emit_label lbl}\n`
-
-(* Emit a Ifloatspecial instruction *)
-
-let emit_floatspecial = function
-    "atan"  -> `	fld1; fpatan\n`
-  | "atan2" -> `	fpatan\n`
-  | "cos"   -> `	fcos\n`
-  | "log"   -> `	fldln2; fxch; fyl2x\n`
-  | "log10" -> `	fldlg2; fxch; fyl2x\n`
-  | "sin"   -> `	fsin\n`
-  | "sqrt"  -> `	fsqrt\n`
-  | "tan"   -> `	fptan; fstp %st(0)\n`
-  | _ -> assert false
+  (* Effect of comisd on flags and conditional branches:
+                     ZF PF CF  cond. branches taken
+        unordered     1  1  1  je, jb, jbe, jp
+        >             0  0  0  jne, jae, ja
+        <             0  0  1  jne, jbe, jb
+        =             1  0  0  je, jae, jbe.
+     If FP traps are on (they are off by default),
+     comisd traps on QNaN and SNaN but ucomisd traps on SNaN only.
+  *)
+  match (cmp, neg) with
+  | (Ceq, false) | (Cne, true) ->
+      let next = new_label() in
+      `	ucomisd	{emit_reg arg.(1)}, {emit_reg arg.(0)}\n`;
+      `	jp	{emit_label next}\n`;    (* skip if unordered *)
+      `	je	{emit_label lbl}\n`;     (* branch taken if x=y *)
+      `{emit_label next}:\n`
+  | (Cne, false) | (Ceq, true) ->
+      `	ucomisd	{emit_reg arg.(1)}, {emit_reg arg.(0)}\n`;
+      `	jp	{emit_label lbl}\n`;     (* branch taken if unordered *)
+      `	jne	{emit_label lbl}\n`      (* branch taken if x<y or x>y *)
+  | (Clt, _) ->
+      ` comisd	{emit_reg arg.(0)}, {emit_reg arg.(1)}\n`;  (* swap compare *)
+      if not neg then
+      `	ja	{emit_label lbl}\n`     (* branch taken if y>x i.e. x<y *)
+      else
+      `	jbe	{emit_label lbl}\n` (* taken if unordered or y<=x i.e. !(x<y) *)
+  | (Cle, _) ->
+      ` comisd	{emit_reg arg.(0)}, {emit_reg arg.(1)}\n`;  (* swap compare *)
+      if not neg then
+      `	jae	{emit_label lbl}\n`     (* branch taken if y>=x i.e. x<=y *)
+      else
+      `	jb	{emit_label lbl}\n` (* taken if unordered or y<x i.e. !(x<=y) *)
+  | (Cgt, _) ->
+      ` comisd	{emit_reg arg.(1)}, {emit_reg arg.(0)}\n`;
+      if not neg then
+      `	ja	{emit_label lbl}\n`     (* branch taken if x>y *)
+      else
+      `	jbe	{emit_label lbl}\n` (* taken if unordered or x<=y i.e. !(x>y) *)
+  | (Cge, _) ->
+      ` comisd	{emit_reg arg.(1)}, {emit_reg arg.(0)}\n`;  (* swap compare *)
+      if not neg then
+      `	jae	{emit_label lbl}\n`     (* branch taken if x>=y *)
+      else
+      `	jb	{emit_label lbl}\n` (* taken if unordered or x<y i.e. !(x>=y) *)
 
 (* Output the assembly code for an instruction *)
 
@@ -420,16 +357,17 @@ let emit_instr fallthrough i =
     | Lop(Imove | Ispill | Ireload) ->
         let src = i.arg.(0) and dst = i.res.(0) in
         if src.loc <> dst.loc then begin
-          if src.typ = Float then
-            if is_tos src then
+          match src.typ, src.loc, dst.loc with
+            Float, Reg 100, Stack _ ->
               `	fstpl	{emit_reg dst}\n`
-            else if is_tos dst then
-              `	fldl	{emit_reg src}\n`
-            else begin
-              `	fldl	{emit_reg src}\n`;
-              `	fstpl	{emit_reg dst}\n`
-            end
-          else
+          | Float, Reg 100, Reg _ ->
+              `	fstpl	-8(%esp)\n`;
+              `	movsd	-8(%esp), {emit_reg dst}\n`;
+          | Float, Reg _, Reg _ ->
+              `	movapd	{emit_reg src}, {emit_reg dst}\n`
+          | Float, _, _ ->
+              `	movsd	{emit_reg src}, {emit_reg dst}\n`
+          | _ ->
               `	movl	{emit_reg src}, {emit_reg dst}\n`
         end
     | Lop(Iconst_int n) ->
@@ -442,17 +380,11 @@ let emit_instr fallthrough i =
     | Lop(Iconst_float s) ->
         begin match Int64.bits_of_float (float_of_string s) with
         | 0x0000_0000_0000_0000L ->       (* +0.0 *)
-          `	fldz\n`
-        | 0x8000_0000_0000_0000L ->       (* -0.0 *)
-          `	fldz\n	fchs\n`
-        | 0x3FF0_0000_0000_0000L ->       (*  1.0 *)
-          `	fld1\n`
-        | 0xBFF0_0000_0000_0000L ->       (* -1.0 *)
-          `	fld1\n	fchs\n`
-        | _ ->
+          `	xorpd	{emit_reg i.res.(0)}, {emit_reg i.res.(0)}\n`
+	| _ ->
           let lbl = new_label() in
           float_constants := (lbl, s) :: !float_constants;
-          `	fldl	{emit_label lbl}\n`
+          `	movsd	{emit_label lbl}, {emit_reg i.res.(0)}\n`
         end
     | Lop(Iconst_symbol s) ->
         `	movl	${emit_symbol s}, {emit_reg i.res.(0)}\n`
@@ -511,9 +443,10 @@ let emit_instr fallthrough i =
           | Sixteen_signed ->
               `	movswl	{emit_addressing addr i.arg 0}, {emit_reg dest}\n`
           | Single ->
-            `	flds	{emit_addressing addr i.arg 0}\n`
+	      `	movss	{emit_addressing addr i.arg 0}, {emit_reg dest}\n`;
+	      `	cvtss2sd {emit_reg dest}, {emit_reg dest}\n`
           | Double | Double_u ->
-            `	fldl	{emit_addressing addr i.arg 0}\n`
+	      `	movsd	{emit_addressing addr i.arg 0}, {emit_reg dest}\n`
         end
     | Lop(Istore(chunk, addr)) ->
         begin match chunk with
@@ -524,19 +457,10 @@ let emit_instr fallthrough i =
           | Sixteen_unsigned | Sixteen_signed ->
             `	movw	{emit_reg16 i.arg.(0)}, {emit_addressing addr i.arg 1}\n`
           | Single ->
-              if is_tos i.arg.(0) then
-                `	fstps	{emit_addressing addr i.arg 1}\n`
-              else begin
-                `	fldl	{emit_reg i.arg.(0)}\n`;
-                `	fstps	{emit_addressing addr i.arg 1}\n`
-              end
+            `	cvtsd2ss {emit_reg i.arg.(0)}, %xmm7\n`;
+            `	movss	%xmm7, {emit_addressing addr i.arg 1}\n`
           | Double | Double_u ->
-              if is_tos i.arg.(0) then
-                `	fstpl	{emit_addressing addr i.arg 1}\n`
-              else begin
-                `	fldl	{emit_reg i.arg.(0)}\n`;
-                `	fstpl	{emit_addressing addr i.arg 1}\n`
-              end
+            `	movsd	{emit_reg i.arg.(0)}, {emit_addressing addr i.arg 1}\n`
         end
     | Lop(Ialloc n) ->
         if !fastcode_flag then begin
@@ -614,56 +538,16 @@ let emit_instr fallthrough i =
     | Lop(Iintop_imm(op, n)) ->
         (* We have i.arg.(0) = i.res.(0) *)
         `	{emit_string(instr_for_intop op)}	${emit_int n}, {emit_reg i.res.(0)}\n`
-    | Lop(Inegf | Iabsf as floatop) ->
-        if not (is_tos i.arg.(0)) then
-          `	fldl	{emit_reg i.arg.(0)}\n`;
-        `	{emit_string(instr_for_floatop floatop)}\n`
-    | Lop(Iaddf | Isubf | Imulf | Idivf | Ispecific(Isubfrev | Idivfrev)
-          as floatop) ->
-        begin match (is_tos i.arg.(0), is_tos i.arg.(1)) with
-          (true, true) ->
-          (* both operands on top of FP stack *)
-          `	{emit_string(instr_for_floatop_pop floatop)}	%st, %st(1)\n`
-        | (true, false) ->
-          (* first operand on stack *)
-          `	{emit_string(instr_for_floatop floatop)}	{emit_reg i.arg.(1)}\n`
-        | (false, true) ->
-          (* second operand on stack *)
-          `	{emit_string(instr_for_floatop_reversed floatop)}	{emit_reg i.arg.(0)}\n`
-        | (false, false) ->
-          (* both operands in memory *)
-          `	fldl	{emit_reg i.arg.(0)}\n`;
-          `	{emit_string(instr_for_floatop floatop)}	{emit_reg i.arg.(1)}\n`
-        end
+    | Lop(Inegf) ->
+    	`	xorpd	{emit_symbol "caml_negf_mask"}, {emit_reg i.res.(0)}\n`
+    | Lop(Iabsf) ->
+    	`	andpd	{emit_symbol "caml_absf_mask"}, {emit_reg i.res.(0)}\n`
+    | Lop(Iaddf | Isubf | Imulf | Idivf as floatop) ->
+    	`	{emit_string(instr_for_floatop floatop)}	{emit_reg i.arg.(1)}, {emit_reg i.res.(0)}\n`
     | Lop(Ifloatofint) ->
-        begin match i.arg.(0).loc with
-          Stack s ->
-            `	fildl	{emit_reg i.arg.(0)}\n`
-        | _ ->
-            `	pushl	{emit_reg i.arg.(0)}\n`;
-            `	fildl	(%esp)\n`;
-            `	addl	$4, %esp\n`
-        end
+    	`	cvtsi2sd	{emit_reg i.arg.(0)}, {emit_reg i.res.(0)}\n`
     | Lop(Iintoffloat) ->
-        if not (is_tos i.arg.(0)) then
-          `	fldl	{emit_reg i.arg.(0)}\n`;
-        stack_offset := !stack_offset - 8;
-        `	subl	$8, %esp\n`;
-        `	fnstcw	4(%esp)\n`;
-        `	movw	4(%esp), %ax\n`;
-        `	movb    $12, %ah\n`;
-        `	movw	%ax, 0(%esp)\n`;
-        `	fldcw	0(%esp)\n`;
-        begin match i.res.(0).loc with
-          Stack s ->
-            `	fistpl	{emit_reg i.res.(0)}\n`
-        | _ ->
-            `	fistpl	(%esp)\n`;
-            `	movl	(%esp), {emit_reg i.res.(0)}\n`
-        end;
-        `	fldcw	4(%esp)\n`;
-        `	addl	$8, %esp\n`;
-        stack_offset := !stack_offset + 8
+    	`	cvttsd2si	{emit_reg i.arg.(0)}, {emit_reg i.res.(0)}\n`
     | Lop(Ispecific(Ilea addr)) ->
         `	lea	{emit_addressing addr i.arg 0}, {emit_reg i.res.(0)}\n`
     | Lop(Ispecific(Istore_int(n, addr))) ->
@@ -679,7 +563,7 @@ let emit_instr fallthrough i =
           match r with
             {loc = Reg _; typ = Float} ->
               `	subl	$8, %esp\n`;
-              `	fstpl	0(%esp)\n`;
+	      `	movsd	{emit_reg r}, 0(%esp)\n`;
               stack_offset := !stack_offset + 8
           | {loc = Stack sl; typ = Float} ->
               let ofs = slot_offset sl 1 in
@@ -703,19 +587,8 @@ let emit_instr fallthrough i =
         `	pushl	{emit_addressing (offset_addressing addr 4) i.arg 0}\n`;
         `	pushl	{emit_addressing addr i.arg 0}\n`;
         stack_offset := !stack_offset + 8
-    | Lop(Ispecific(Ifloatarithmem(double, op, addr))) ->
-        if not (is_tos i.arg.(0)) then
-          `	fldl	{emit_reg i.arg.(0)}\n`;
-        `	{emit_string(instr_for_floatarithmem double op)}	{emit_addressing addr i.arg 1}\n`
-    | Lop(Ispecific(Ifloatspecial s)) ->
-        (* Push args on float stack if necessary *)
-        for k = 0 to Array.length i.arg - 1 do
-          if not (is_tos i.arg.(k)) then `	fldl	{emit_reg i.arg.(k)}\n`
-        done;
-        (* Fix-up for binary instrs whose args were swapped *)
-        if Array.length i.arg = 2 && is_tos i.arg.(1) then
-          `	fxch	%st(1)\n`;
-        emit_floatspecial s
+    | Lop(Ispecific(Ifloatarithmem(op, addr))) ->
+        `	{emit_string(instr_for_floatarithmem op)}	{emit_addressing addr i.arg 1}, {emit_reg i.res.(0)}\n`
     | Lreloadretaddr ->
         ()
     | Lreturn ->
@@ -954,6 +827,16 @@ let data l =
 (* Beginning / end of an assembly file *)
 
 let begin_assembly() =
+  if !Clflags.dlcode then begin
+    if macosx then
+        `	.literal16\n`
+    else
+        `	.section        .rodata.cst8,\"a\",@progbits\n`;
+    emit_align 16;
+    `{emit_symbol "caml_negf_mask"}:	.quad   0x8000000000000000, 0\n`;
+    emit_align 16;
+    `{emit_symbol "caml_absf_mask"}:	.quad   0x7FFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF\n`
+  end;
   let lbl_begin = Compilenv.make_symbol (Some "data_begin") in
   `	.data\n`;
   `	.globl	{emit_symbol lbl_begin}\n`;

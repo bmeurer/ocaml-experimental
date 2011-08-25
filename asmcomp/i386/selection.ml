@@ -73,31 +73,6 @@ let rec select_addr exp =
   | arg ->
       (Alinear arg, 0)
 
-(* C functions to be turned into Ifloatspecial instructions if -ffast-math *)
-
-let inline_float_ops =
-  ["atan"; "atan2"; "cos"; "log"; "log10"; "sin"; "sqrt"; "tan"]
-
-(* Estimate number of float temporaries needed to evaluate expression
-   (Ershov's algorithm) *)
-
-let rec float_needs = function
-    Cop((Cnegf | Cabsf), [arg]) ->
-      float_needs arg
-  | Cop((Caddf | Csubf | Cmulf | Cdivf), [arg1; arg2]) ->
-      let n1 = float_needs arg1 in
-      let n2 = float_needs arg2 in
-      if n1 = n2 then 1 + n1 else if n1 > n2 then n1 else n2
-  | Cop(Cextcall(fn, ty_res, alloc, dbg), args)
-    when !fast_math && List.mem fn inline_float_ops ->
-      begin match args with
-        [arg] -> float_needs arg
-      | [arg1; arg2] -> max (float_needs arg2 + 1) (float_needs arg1)
-      | _ -> assert false
-      end
-  | _ ->
-      1
-
 (* Special constraints on operand and result registers *)
 
 exception Use_default
@@ -105,16 +80,20 @@ exception Use_default
 let eax = phys_reg 0
 let ecx = phys_reg 2
 let edx = phys_reg 3
-let tos = phys_reg 100
 
 let pseudoregs_for_operation op arg res =
   match op with
   (* Two-address binary operations *)
-    Iintop(Iadd|Isub|Imul|Iand|Ior|Ixor) ->
+    Iintop(Iadd|Isub|Imul|Iand|Ior|Ixor) | Iaddf|Isubf|Imulf|Idivf ->
       ([|res.(0); arg.(1)|], res, false)
   (* Two-address unary operations *)
-  | Iintop_imm((Iadd|Isub|Imul|Idiv|Iand|Ior|Ixor|Ilsl|Ilsr|Iasr), _) ->
+  | Iintop_imm((Iadd|Isub|Imul|Idiv|Iand|Ior|Ixor|Ilsl|Ilsr|Iasr), _)
+  | Iabsf | Inegf ->
       (res, res, false)
+  | Ispecific(Ifloatarithmem(_, _)) ->
+      let arg' = Array.copy arg in
+      arg'.(0) <- res.(0);
+      (arg', res, false)
   (* For shifts with variable shift count, second arg must be in ecx *)
   | Iintop(Ilsl|Ilsr|Iasr) ->
       ([|res.(0); ecx|], res, false)
@@ -129,12 +108,6 @@ let pseudoregs_for_operation op arg res =
      Keep it simple, force it in edx. *)
   | Iintop_imm(Imod, _) ->
       ([| edx |], [| edx |], true)
-  (* For floating-point operations and floating-point loads,
-     the result is always left at the top of the floating-point stack *)
-  | Iconst_float _ | Inegf | Iabsf | Iaddf | Isubf | Imulf | Idivf
-  | Ifloatofint | Iload((Single | Double | Double_u), _)
-  | Ispecific(Isubfrev | Idivfrev | Ifloatarithmem(_, _, _) | Ifloatspecial _) ->
-      (arg, [| tos |], false)           (* don't move it immediately *)
   (* For storing a byte, the argument must be in eax...edx.
      (But for a short, any reg will do!)
      Keep it simple, just force the argument to be in edx. *)
@@ -145,12 +118,6 @@ let pseudoregs_for_operation op arg res =
   (* Other instructions are regular *)
   | _ -> raise Use_default
 
-let chunk_double = function
-    Single -> false
-  | Double -> true
-  | Double_u -> true
-  | _ -> assert false
-
 (* The selector class *)
 
 class selector = object (self)
@@ -158,15 +125,6 @@ class selector = object (self)
 inherit Selectgen.selector_generic as super
 
 method is_immediate (n : int) = true
-
-method! is_simple_expr e =
-  match e with
-  | Cop(Cextcall(fn, _, alloc, _), args)
-    when !fast_math && List.mem fn inline_float_ops ->
-      (* inlined float ops are simple if their arguments are *)
-      List.for_all self#is_simple_expr args
-  | _ ->
-      super#is_simple_expr e
 
 method select_addressing exp =
   match select_addr exp with
@@ -221,13 +179,13 @@ method! select_operation op args =
   (* Recognize float arithmetic with memory.
      In passing, apply Ershov's algorithm to reduce stack usage *)
   | Caddf ->
-      self#select_floatarith Iaddf Iaddf Ifloatadd Ifloatadd args
+      self#select_floatarith true Iaddf Ifloatadd args
   | Csubf ->
-      self#select_floatarith Isubf (Ispecific Isubfrev) Ifloatsub Ifloatsubrev args
+      self#select_floatarith false Isubf Ifloatsub args
   | Cmulf ->
-      self#select_floatarith Imulf Imulf Ifloatmul Ifloatmul args
+      self#select_floatarith true Imulf Ifloatmul args
   | Cdivf ->
-      self#select_floatarith Idivf (Ispecific Idivfrev) Ifloatdiv Ifloatdivrev args
+      self#select_floatarith false Idivf Ifloatdiv args
   (* Recognize store instructions *)
   | Cstore Word ->
       begin match args with
@@ -238,34 +196,25 @@ method! select_operation op args =
       | _ ->
           super#select_operation op args
       end
-  (* Recognize inlined floating point operations *)
-  | Cextcall(fn, ty_res, false, dbg)
-    when !fast_math && List.mem fn inline_float_ops ->
-      (Ispecific(Ifloatspecial fn), args)
   (* Default *)
   | _ -> super#select_operation op args
 
 (* Recognize float arithmetic with mem *)
 
-method select_floatarith regular_op reversed_op mem_op mem_rev_op args =
+method select_floatarith commutative regular_op mem_op args =
   match args with
-    [arg1; Cop(Cload chunk, [loc2])] ->
+    [arg1; Cop(Cload (Double|Double_u), [loc2])] ->
       let (addr, arg2) = self#select_addressing loc2 in
-      (Ispecific(Ifloatarithmem(chunk_double chunk, mem_op, addr)),
+      (Ispecific(Ifloatarithmem(mem_op, addr)),
                  [arg1; arg2])
-  | [Cop(Cload chunk, [loc1]); arg2] ->
+  | [Cop(Cload (Double|Double_u), [loc1]); arg2] when commutative ->
       let (addr, arg1) = self#select_addressing loc1 in
-      (Ispecific(Ifloatarithmem(chunk_double chunk, mem_rev_op, addr)),
+      (Ispecific(Ifloatarithmem(mem_op, addr)),
                  [arg2; arg1])
   | [arg1; arg2] ->
-      (* Evaluate bigger subexpression first to minimize stack usage.
-         Because of right-to-left evaluation, rightmost arg is evaluated
-         first *)
-      if float_needs arg1 <= float_needs arg2
-      then (regular_op, [arg1; arg2])
-      else (reversed_op, [arg2; arg1])
+      (regular_op, [arg1; arg2])
   | _ ->
-      fatal_error "Proc_i386: select_floatarith"
+      assert false
 
 (* Deal with register constraints *)
 
