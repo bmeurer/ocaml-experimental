@@ -103,6 +103,7 @@ TOPLIB=$(UTILS) $(PARSING) $(TYPING) $(COMP) $(BYTECOMP) $(TOPLEVEL)
 TOPOBJS=$(TOPLEVELLIB) $(TOPLEVELSTART)
 
 NATTOPOBJS=$(OPTUTILS) $(PARSING) $(TYPING) $(COMP) $(ASMCOMP) \
+  asmcomp/jit.cmo \
   driver/pparse.cmo driver/opterrors.cmo driver/optcompile.cmo \
   driver/main_args.cmo \
   toplevel/genprintval.cmo toplevel/opttoploop.cmo toplevel/opttopdirs.cmo \
