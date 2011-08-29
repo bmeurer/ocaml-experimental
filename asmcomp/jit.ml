@@ -170,7 +170,7 @@ let jit_reloc_abs64 sym =
 
 let jit_reloc_diff32 lbl1 lbl2 ofs =
   jit_reloc (RelocDiff32(jit_label_name lbl1, jit_label_name lbl2, ofs));
-  jit_skip 4
+  jit_long 0
 
 
 (* Global offset table management *)
