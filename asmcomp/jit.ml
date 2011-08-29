@@ -52,7 +52,7 @@ let reset_section sec =
 
 let jit_text_section = new_section ()
 let jit_data_section = new_section ()
-let jit_rodata_section = new_section ()
+let jit_got_section = new_section ()
 let jit_curr_section = ref jit_text_section
 
 let jit_globals = ref ([] : string list)
@@ -66,13 +66,13 @@ let jit_text () =
 let jit_data () =
   jit_curr_section := jit_data_section
 
-let jit_rodata () =
-  jit_curr_section := jit_rodata_section
+let jit_got () =
+  jit_curr_section := jit_got_section
 
 let jit_reset () =
   reset_section jit_text_section;
   reset_section jit_data_section;
-  reset_section jit_rodata_section;
+  reset_section jit_got_section;
   jit_globals := [];
   jit_relocs := [];
   jit_symbols := [];
@@ -181,7 +181,7 @@ let jit_got_label_for_symbol sym =
     Not_found ->
       let lbl = new_label () in
       let sec = !jit_curr_section in
-      jit_rodata ();
+      jit_got ();
       jit_label lbl;
       jit_reloc_abs64 sym;
       jit_curr_section := sec;
@@ -1158,13 +1158,11 @@ let emit_instr fallthrough i =
         jit_movslq (memindex 0 (emit_reg tmp1) (emit_reg i.arg.(0)) 4) (emit_reg tmp2);
         jit_addq (emit_reg tmp2) (emit_reg tmp1);
         jit_jmpq (emit_reg tmp1);
-        jit_rodata ();
         jit_align 4;
         jit_label lbl;
         for i = 0 to Array.length jumptbl - 1 do
           jit_reloc_diff32 jumptbl.(i) lbl 0
-        done;
-        jit_text ()
+        done
     | Lsetuptrap lbl ->
         jit_call_label lbl
     | Lpushtrap ->
@@ -1268,13 +1266,6 @@ let data l =
 (* Beginning / end of an assembly file *)
 
 let begin_assembly() =
-  (* from amd64.S; could emit these constants on demand *)
-  jit_rodata ();
-  jit_align 16;
-  jit_symbol "caml_negf_mask";
-  jit_quad 0x8000000000000000n; jit_quad 0x0000000000000000n;
-  jit_symbol "caml_absf_mask";
-  jit_quad 0x7FFFFFFFFFFFFFFFn; jit_quad 0xFFFFFFFFFFFFFFFFn;
   jit_data ();
   jit_symbol_globl (Compilenv.make_symbol (Some "data_begin"));
   jit_text ();
@@ -1282,6 +1273,12 @@ let begin_assembly() =
   if macosx then jit_byte 0x90 (* PR#4690 *)
 
 let end_assembly() =
+  (* from amd64.S; could emit these constants on demand *)
+  jit_align 16;
+  jit_symbol "caml_negf_mask";
+  jit_quad 0x8000000000000000n; jit_quad 0x0000000000000000n;
+  jit_symbol "caml_absf_mask";
+  jit_quad 0x7FFFFFFFFFFFFFFFn; jit_quad 0xFFFFFFFFFFFFFFFFn;
   jit_data ();
   jit_symbol_globl (Compilenv.make_symbol (Some "data_end"));
   jit_text ();
