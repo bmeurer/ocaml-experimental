@@ -36,8 +36,7 @@ type reloc =
     RelocAbs64 of (*sym*)string
   | RelocDiff32 of (*sym1*)string * (*sym2*)string * (*disp*)int
                    (* (sym1 - sym2) + disp *)
-  | RelocJmp of (*sym*)string
-  | RelocRip of (*sym*)string
+  | RelocRel32 of (*sym*)string
 
 type section =
   { mutable sec_content: string;
@@ -298,7 +297,7 @@ let jit_mod_rm_reg rex opcodes rm reg =
       jit_rex rex reg 0 0;
       jit_opcodes opcodes;
       jit_modrm 0b00 0b101 reg;
-      jit_reloc (RelocRip(sym));
+      jit_reloc (RelocRel32(sym));
       jit_long 0
   | Memory(ireg, scale, (*no breg*)-1, disp) ->
       jit_rex rex reg ireg 0;
@@ -525,31 +524,49 @@ let jit_salq src dst = jit_shfq 4 src dst
 let jit_shrq src dst = jit_shfq 5 src dst
 let jit_sarq src dst = jit_shfq 7 src dst
 
-(*TODO*)let jit_trampolines = ref 0
-
 let jit_jmpq dst =
   jit_mod_rm_reg 0 0xff dst 4
 
 let jit_jmp_label lbl =
-  jit_reloc (RelocJmp(jit_label_name lbl));
-  jit_byte 0xe9; jit_long 0
+  jit_byte 0xe9;
+  jit_reloc (RelocRel32(jit_label_name lbl));
+  jit_long 0
 
 let jit_jmp_symbol sym =
-  jit_reloc (RelocJmp(jit_symbol_name sym));
-  jit_byte 0xe9; jit_long 0;
-  incr (jit_trampolines)
+  let sym = jit_symbol_name sym in
+  (* local symbols don't need indirection *)
+  if List.mem_assoc sym !jit_symbols then begin
+    (* jmp sym *)
+    jit_byte 0xe9;
+    jit_reloc (RelocRel32 sym);
+    jit_long 0
+  end else begin
+    (* jmpq sym@GOT(%rip) *)
+    let lbl = jit_got_label_for_symbol sym in
+    jit_jmpq (Symbol(jit_label_name lbl))
+  end
 
 let jit_callq dst =
   jit_mod_rm_reg 0 0xff dst 2
 
 let jit_call_label lbl =
-  jit_reloc (RelocJmp(jit_label_name lbl));
-  jit_byte 0xe8; jit_skip 4
+  jit_byte 0xe8;
+  jit_reloc (RelocRel32(jit_label_name lbl));
+  jit_long 0
 
 let jit_call_symbol sym =
-  jit_reloc (RelocJmp(jit_symbol_name sym));
-  jit_byte 0xe8; jit_skip 4;
-  incr (jit_trampolines)
+  let sym = jit_symbol_name sym in
+  (* local symbols don't need indirection *)
+  if List.mem_assoc sym !jit_symbols then begin
+    (* call sym *)
+    jit_byte 0xe8;
+    jit_reloc (RelocRel32 sym);
+    jit_long 0
+  end else begin
+    (* callq sym@GOT(%rip) *)
+    let lbl = jit_got_label_for_symbol sym in
+    jit_callq (Symbol(jit_label_name lbl))
+  end
 
 let jit_ret () =
   jit_byte 0xc3
@@ -582,8 +599,9 @@ type cc =
 external int_of_cc: cc -> int = "%identity"
 
 let jit_jcc_label cc lbl =
-  jit_reloc (RelocJmp(jit_label_name lbl));
-  jit_byte 0x0f; jit_byte (0x80 + (int_of_cc cc)); jit_long 0
+  jit_byte 0x0f; jit_byte (0x80 + (int_of_cc cc));
+  jit_reloc (RelocRel32(jit_label_name lbl));
+  jit_long 0
 
 let jit_jb_label   lbl = jit_jcc_label B   lbl
 let jit_jnb_label  lbl = jit_jcc_label NB  lbl
@@ -618,7 +636,7 @@ let jit_load_symbol_addr sym dst =
   else begin
     (* GOT magic... well somewhat *)
     let lbl = jit_got_label_for_symbol sym in
-    jit_movq (Symbol (jit_label_name lbl)) dst
+    jit_movq (Symbol(jit_label_name lbl)) dst
   end
  
 
