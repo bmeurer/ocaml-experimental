@@ -418,7 +418,7 @@ let jit_movl src dst =
 
 let jit_movq src dst =
   match src, dst with
-    Immediate n, rm ->
+    Immediate n, ((Memory _ | Register _) as rm) ->
       jit_mod_rm_reg rexw 0xc7 rm 0;
       jit_long (Nativeint.to_int n)
   | rm, Register reg ->
