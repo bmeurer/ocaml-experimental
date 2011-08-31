@@ -14,6 +14,8 @@
 
 (* From lambda to assembly code *)
 
+module type Generator =
+sig
 val compile_implementation :
     ?toplevel:(string -> bool) ->
     string -> Format.formatter -> int * Lambda.lambda -> unit
@@ -23,3 +25,8 @@ val compile_phrase :
 type error = Assembler_error of string
 exception Error of error
 val report_error: Format.formatter -> error -> unit
+end
+
+module Make (Emit: module type of Emit) : Generator
+
+include Generator

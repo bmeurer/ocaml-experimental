@@ -20,6 +20,21 @@ open Clflags
 open Misc
 open Cmm
 
+module type Generator =
+sig
+val compile_implementation :
+    ?toplevel:(string -> bool) ->
+    string -> Format.formatter -> int * Lambda.lambda -> unit
+val compile_phrase :
+    Format.formatter -> Cmm.phrase -> unit
+
+type error = Assembler_error of string
+exception Error of error
+val report_error: Format.formatter -> error -> unit
+end
+
+module Make (Emit: module type of Emit) =
+struct
 type error = Assembler_error of string
 
 exception Error of error
@@ -95,44 +110,56 @@ let compile_genfuns ppf f =
     (Cmmgen.generic_functions true [Compilenv.current_unit_infos ()])
 
 let compile_implementation ?toplevel prefixname ppf (size, lam) =
-  let asmfile =
-    if !keep_asm_file
-    then prefixname ^ ext_asm
-    else Filename.temp_file "camlasm" ext_asm in
-  let oc = open_out asmfile in
-  begin try
-    Emitaux.output_channel := oc;
-    Emit.begin_assembly();
-    Closure.intro size lam
-    ++ Cmmgen.compunit size
-    ++ List.iter (compile_phrase ppf) ++ (fun () -> ());
-    (match toplevel with None -> () | Some f -> compile_genfuns ppf f);
+  begin match toplevel with
+    None ->
+      let asmfile =
+        if !keep_asm_file
+        then prefixname ^ ext_asm
+        else Filename.temp_file "camlasm" ext_asm in
+      let oc = open_out asmfile in
+      begin try
+        Emitaux.output_channel := oc;
+        Emit.begin_assembly();
+        Closure.intro size lam
+        ++ Cmmgen.compunit size
+        ++ List.iter (compile_phrase ppf) ++ (fun () -> ());
 
-    (* We add explicit references to external primitive symbols.  This
-       is to ensure that the object files that define these symbols,
-       when part of a C library, won't be discarded by the linker.
-       This is important if a module that uses such a symbol is later
-       dynlinked. *)
+        (* We add explicit references to external primitive symbols.  This
+           is to ensure that the object files that define these symbols,
+           when part of a C library, won't be discarded by the linker.
+           This is important if a module that uses such a symbol is later
+           dynlinked. *)
 
-    compile_phrase ppf
-      (Cmmgen.reference_symbols
-         (List.filter (fun s -> s <> "" && s.[0] <> '%')
-            (List.map Primitive.native_name !Translmod.primitive_declarations))
-      );
+        compile_phrase ppf
+          (Cmmgen.reference_symbols
+             (List.filter (fun s -> s <> "" && s.[0] <> '%')
+                (List.map Primitive.native_name !Translmod.primitive_declarations))
+          );
 
-    Emit.end_assembly();
-    close_out oc
-  with x ->
-    close_out oc;
-    if !keep_asm_file then () else remove_file asmfile;
-    raise x
-  end;
-  if Proc.assemble_file asmfile (prefixname ^ ext_obj) <> 0
-  then raise(Error(Assembler_error asmfile));
-  if !keep_asm_file then () else remove_file asmfile
+        Emit.end_assembly();
+        close_out oc
+      with x ->
+        close_out oc;
+        if !keep_asm_file then () else remove_file asmfile;
+        raise x
+      end;
+      if Proc.assemble_file asmfile (prefixname ^ ext_obj) <> 0
+      then raise(Error(Assembler_error asmfile));
+      if !keep_asm_file then () else remove_file asmfile
+  | Some f ->
+      Emit.begin_assembly();
+      Closure.intro size lam
+      ++ Cmmgen.compunit size
+      ++ List.iter (compile_phrase ppf) ++ (fun () -> ());
+      compile_genfuns ppf f;
+      Emit.end_assembly()
+  end
 
 (* Error report *)
 
 let report_error ppf = function
   | Assembler_error file ->
       fprintf ppf "Assembler error, input left in file %s" file
+end
+
+include Make(Emit)
