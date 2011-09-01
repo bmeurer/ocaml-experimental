@@ -201,7 +201,6 @@ let jit_symbol_define sym =
 
 let jit_symbol_name sym =
   let buf = Buffer.create (1 + String.length sym) in
-  if macosx then Buffer.add_char buf '_';
   String.iter
     (function
         ('A'..'Z' | 'a'..'z' | '0'..'9' | '_') as c -> Buffer.add_char buf c
