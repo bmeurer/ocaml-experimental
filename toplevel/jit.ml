@@ -1021,7 +1021,9 @@ let emit_instr fallthrough i =
           jit_call_symbol s
         end
     | Lop(Istackoffset n) ->
-        jit_subq (Immediate(Nativeint.of_int n)) rsp;
+        if n < 0
+        then jit_addq (Immediate(Nativeint.of_int (-n))) rsp
+        else jit_subq (Immediate(Nativeint.of_int n)) rsp;
         stack_offset := !stack_offset + n
     | Lop(Iload(chunk, addr)) ->
         let dest = i.res.(0) in
@@ -1336,8 +1338,7 @@ let begin_assembly() =
   jit_data();
   jit_symbol_globl (Compilenv.make_symbol (Some "data_begin"));
   jit_text();
-  jit_symbol_globl (Compilenv.make_symbol (Some "code_begin"));
-  if macosx then jit_byte 0x90 (* PR#4690 *)
+  jit_symbol_globl (Compilenv.make_symbol (Some "code_begin"))
 
 let end_assembly() =
   (* from amd64.S; could emit these constants on demand *)
