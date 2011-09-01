@@ -175,8 +175,6 @@ natdynlink.o: natdynlink.c ../byterun/misc.h ../byterun/config.h \
   ../byterun/mlvalues.h ../byterun/major_gc.h ../byterun/freelist.h \
   ../byterun/minor_gc.h stack.h ../byterun/callback.h ../byterun/alloc.h \
   natdynlink.h ../byterun/osdeps.h ../byterun/fail.h
-natjit.o: natjit.c ../byterun/mlvalues.h ../byterun/config.h \
-  ../byterun/../config/m.h ../byterun/../config/s.h ../byterun/misc.h
 obj.o: obj.c ../byterun/alloc.h ../byterun/misc.h ../byterun/config.h \
   ../byterun/../config/m.h ../byterun/../config/s.h ../byterun/mlvalues.h \
   ../byterun/fail.h ../byterun/gc.h ../byterun/interp.h \
@@ -424,8 +422,6 @@ natdynlink.d.o: natdynlink.c ../byterun/misc.h ../byterun/config.h \
   ../byterun/mlvalues.h ../byterun/major_gc.h ../byterun/freelist.h \
   ../byterun/minor_gc.h stack.h ../byterun/callback.h ../byterun/alloc.h \
   natdynlink.h ../byterun/osdeps.h ../byterun/fail.h
-natjit.d.o: natjit.c ../byterun/mlvalues.h ../byterun/config.h \
-  ../byterun/../config/m.h ../byterun/../config/s.h ../byterun/misc.h
 obj.d.o: obj.c ../byterun/alloc.h ../byterun/misc.h ../byterun/config.h \
   ../byterun/../config/m.h ../byterun/../config/s.h ../byterun/mlvalues.h \
   ../byterun/fail.h ../byterun/gc.h ../byterun/interp.h \
@@ -673,8 +669,6 @@ natdynlink.p.o: natdynlink.c ../byterun/misc.h ../byterun/config.h \
   ../byterun/mlvalues.h ../byterun/major_gc.h ../byterun/freelist.h \
   ../byterun/minor_gc.h stack.h ../byterun/callback.h ../byterun/alloc.h \
   natdynlink.h ../byterun/osdeps.h ../byterun/fail.h
-natjit.p.o: natjit.c ../byterun/mlvalues.h ../byterun/config.h \
-  ../byterun/../config/m.h ../byterun/../config/s.h ../byterun/misc.h
 obj.p.o: obj.c ../byterun/alloc.h ../byterun/misc.h ../byterun/config.h \
   ../byterun/../config/m.h ../byterun/../config/s.h ../byterun/mlvalues.h \
   ../byterun/fail.h ../byterun/gc.h ../byterun/interp.h \

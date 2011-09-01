@@ -1,3 +1,24 @@
+/***********************************************************************/
+/*                                                                     */
+/*                           Objective Caml                            */
+/*                                                                     */
+/*                  Benedikt Meurer, University of Siegen              */
+/*                                                                     */
+/*    Copyright 2011 Lehrstuhl für Compilerbau und Softwareanalyse,    */
+/*    Universität Siegen. All rights reserved. This file is distri-    */
+/*    buted under the terms of the Q Public License version 1.0.       */
+/*                                                                     */
+/***********************************************************************/
+
+/* $Id$ */
+
+/* Dynamic link and JIT support for the native runtime */
+
+#include <sys/types.h>
+#include <sys/mman.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
 #include "misc.h"
 #include "mlvalues.h"
 #include "memory.h"
@@ -8,17 +29,44 @@
 #include "osdeps.h"
 #include "fail.h"
 
-#include <stdio.h>
-#include <string.h>
+struct symbol {
+  struct symbol *next;
+  void          *addr;
+  char           name[1];
+};
+
+static struct symbol *symbols = NULL;
+
+static void addsym(char *name, void *addr){
+  mlsize_t namelen = strlen(name);
+  struct symbol *sym = malloc(sizeof(struct symbol) + namelen);
+  memcpy(sym->name, name, namelen + 1);
+  sym->addr = addr;
+  sym->next = symbols;
+  symbols = sym;
+}
 
 static void *getsym(void *handle, char *module, char *name){
-  char *fullname = malloc(strlen(module) + strlen(name) + 5);
-  void *sym;
-  sprintf(fullname, "caml%s%s", module, name);
-  sym = caml_dlsym (handle, fullname);
-  /*  printf("%s => %lx\n", fullname, (uintnat) sym); */
-  free(fullname);
-  return sym;
+  void *addr = NULL;
+  struct symbol *sym;
+  char *fullname = name;
+  if (module) {
+    char *fullname = malloc(strlen(module) + strlen(name) + 5);
+    sprintf(fullname, "caml%s%s", module, name);
+  }
+  for (sym = symbols; sym != NULL; sym = sym->next){
+    if (strcmp(sym->name, fullname) == 0){
+      addr = sym->addr;
+      break;
+    }
+  }
+  if (!addr) addr = caml_dlsym(handle, fullname);
+  if (name != fullname) free(fullname);
+  return addr;
+}
+
+static void *getglobalsym(char *name){
+  return getsym(caml_rtld_default(), NULL, name);
 }
 
 extern char caml_globals_map[];
@@ -40,16 +88,16 @@ CAMLprim value caml_natdynlink_open(value filename, value global)
   void *sym;
   void *handle;
 
-  /* TODO: dlclose in case of error... */
-
   handle = caml_dlopen(String_val(filename), 1, Int_val(global));
 
   if (NULL == handle)
     CAMLreturn(caml_copy_string(caml_dlerror()));
 
-  sym = caml_dlsym(handle, "caml_plugin_header");
-  if (NULL == sym)
+  sym = getsym(handle, NULL, "caml_plugin_header");
+  if (NULL == sym) {
+    caml_dlclose(handle);
     CAMLreturn(caml_copy_string("not an OCaml plugin"));
+  }
 
   res = caml_alloc_tuple(2);
   Field(res, 0) = (value) handle;
@@ -120,7 +168,57 @@ CAMLprim value caml_natdynlink_loadsym(value symbol)
   CAMLparam1 (symbol);
   CAMLlocal1 (sym);
 
-  sym = (value) caml_globalsym(String_val(symbol));
+  sym = (value)getglobalsym(String_val(symbol));
   if (!sym) caml_failwith(String_val(symbol));
   CAMLreturn(sym);
+}
+
+/* JIT support */
+
+CAMLprim value caml_natdynlink_run_jit(value symbol)
+{
+  return caml_natdynlink_run(caml_rtld_default(), symbol);
+}
+
+CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
+{
+  CAMLparam2 (text_size, data_size);
+  CAMLlocal1 (res);
+  size_t psize = getpagesize();
+  size_t tsize = ((Nativeint_val(text_size) + (psize - 1)) / psize) * psize;
+  size_t dsize = ((Nativeint_val(data_size) + (psize - 1)) / psize) * psize;
+  char *text, *data;
+
+  text = (char *)mmap(NULL, tsize + dsize,
+                      PROT_READ | PROT_WRITE,
+                      MAP_ANON | MAP_PRIVATE,
+                      -1, 0);
+  if (text == (char *)MAP_FAILED) caml_raise_out_of_memory();
+  mprotect(text, tsize, PROT_EXEC | PROT_READ | PROT_WRITE);
+  data = text + tsize;
+
+  res = caml_alloc_tuple(2);
+  Field(res, 0) = (value)caml_copy_nativeint((intnat)text);
+  Field(res, 1) = (value)caml_copy_nativeint((intnat)data);
+  CAMLreturn(res);
+}
+
+CAMLprim value caml_natdynlink_memcpy(value dst, value src, value size)
+{
+  memcpy((void *)Nativeint_val(dst), String_val(src), Long_val(size));
+  return Val_unit;
+}
+
+CAMLprim value caml_natdynlink_addsym(value name, value addr)
+{
+  addsym(String_val(name), (void *)Nativeint_val(addr));
+  return Val_unit;
+}
+
+CAMLprim value caml_natdynlink_getsym(value name)
+{
+  void *addr;
+  addr = getglobalsym(String_val(name));
+  if (!addr) caml_failwith(String_val(name));
+  return caml_copy_nativeint((intnat)addr);
 }

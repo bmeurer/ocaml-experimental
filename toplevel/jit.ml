@@ -28,15 +28,12 @@ let macosx =
   | "macosx" -> true
   | _ -> false
 
+module Addr = Nativeint
 
-(* ==== TODO ==== *)
-
-external jit_pagesize: unit -> int = "caml_natjit_pagesize" "noalloc"
-external jit_alloc: int -> nativeint = "caml_natjit_alloc"
-external jit_memcpy: nativeint -> string -> int -> unit = "caml_natjit_memcpy" "noalloc"
-external jit_mkexec: nativeint -> int -> unit = "caml_natjit_mkexec"
-external jit_lookupsym: string -> nativeint = "caml_natjit_lookupsym"
-external jit_registersym: string -> nativeint -> unit = "caml_natjit_registersym"
+external ndl_malloc: int -> int -> Addr.t * Addr.t = "caml_natdynlink_malloc"
+external ndl_memcpy: Addr.t -> string -> int -> unit = "caml_natdynlink_memcpy" "noalloc"
+external ndl_addsym: string -> Addr.t -> unit = "caml_natdynlink_addsym" "noalloc"
+external ndl_getsym: string -> Addr.t = "caml_natdynlink_getsym"
 
 type reloc =
     RelocAbs64 of (*sym*)string
@@ -45,18 +42,18 @@ type reloc =
                    (* (sym1 - sym2) + disp *)
 
 type section =
-  { mutable sec_content: string;
-    mutable sec_position: int;
+  { mutable sec_buf: string;
+    mutable sec_pos: int;
     mutable sec_addr: nativeint }
 
 let new_sec () =
-  { sec_content = String.create 1024;
-    sec_position = 0;
+  { sec_buf = String.create 1024;
+    sec_pos = 0;
     sec_addr = 0n }
 
 let reset_sec sec =
-  sec.sec_content <- String.create 1024;
-  sec.sec_position <- 0
+  sec.sec_buf <- String.create 1024;
+  sec.sec_pos <- 0
 
 let jit_text_sec = new_sec ()
 let jit_data_sec = new_sec ()
@@ -95,7 +92,7 @@ let jit_addr_of_symbol sym =
   with
     Not_found ->
       (* Fallback to the global symbol table *)
-      jit_lookupsym sym
+      ndl_getsym sym
 
 let jit_patch_reloc (sec, ofs, rel) =
   let jit_patch_long str ofs n =
@@ -106,15 +103,15 @@ let jit_patch_reloc (sec, ofs, rel) =
   in match rel with
     RelocAbs64 sym ->
       let addr = jit_addr_of_symbol sym in
-      jit_patch_long sec.sec_content ofs (Nativeint.to_int addr);
-      jit_patch_long sec.sec_content (ofs + 4) (Nativeint.to_int (Nativeint.shift_right addr 32))
+      jit_patch_long sec.sec_buf ofs (Nativeint.to_int addr);
+      jit_patch_long sec.sec_buf (ofs + 4) (Nativeint.to_int (Nativeint.shift_right addr 32))
   | RelocRel32 sym ->
       let saddr = jit_addr_of_symbol sym in
       let raddr = Nativeint.add sec.sec_addr (Nativeint.of_int (ofs + 4)) in
       let rel32 = Nativeint.sub saddr raddr in
       assert (rel32 >= (Nativeint.of_int32 Int32.min_int));
       assert (rel32 <= (Nativeint.of_int32 Int32.max_int));
-      jit_patch_long sec.sec_content ofs (Nativeint.to_int rel32)
+      jit_patch_long sec.sec_buf ofs (Nativeint.to_int rel32)
   | RelocDiff32(sym1, sym2, disp) ->
       let saddr1 = jit_addr_of_symbol sym1 in
       let saddr2 = jit_addr_of_symbol sym2 in
@@ -122,47 +119,44 @@ let jit_patch_reloc (sec, ofs, rel) =
       let rel32 = Nativeint.add rel32 (Nativeint.of_int disp) in
       assert (rel32 >= (Nativeint.of_int32 Int32.min_int));
       assert (rel32 <= (Nativeint.of_int32 Int32.max_int));
-      jit_patch_long sec.sec_content ofs (Nativeint.to_int rel32)
+      jit_patch_long sec.sec_buf ofs (Nativeint.to_int rel32)
 
 let jit_memcpy_sec sec =
-  jit_memcpy sec.sec_addr sec.sec_content sec.sec_position
+  ndl_memcpy sec.sec_addr sec.sec_buf sec.sec_pos
 
 let jit_finalize () =
-  let psize = jit_pagesize () in
-  let tsize = Misc.align (max jit_text_sec.sec_position 1) 8 in
-  let dsize = Misc.align (max jit_data_sec.sec_position 1) psize in
-  (* Allocate text and data together *)
-  let rosize = Misc.align (tsize + jit_got_sec.sec_position) psize in
-  let addr = jit_alloc (rosize + dsize) in
-  jit_text_sec.sec_addr <- addr;
-  jit_data_sec.sec_addr <- Nativeint.add addr (Nativeint.of_int rosize);
-  jit_got_sec.sec_addr <- Nativeint.add addr (Nativeint.of_int tsize);
+  assert (jit_text_sec.sec_pos > 0);
+  let text_size = Misc.align jit_text_sec.sec_pos 8 in
+  let got_size = jit_got_sec.sec_pos in
+  let data_size = jit_data_sec.sec_pos in
+  let (text, data) = ndl_malloc (text_size + got_size) data_size in
+  jit_text_sec.sec_addr <- text;
+  jit_data_sec.sec_addr <- data;
+  jit_got_sec.sec_addr <- Nativeint.add text (Nativeint.of_int text_size);
   (* Patch all relocations *)
   List.iter jit_patch_reloc !jit_relocs;
   (* Copy section content *)
   jit_memcpy_sec jit_text_sec;
   jit_memcpy_sec jit_data_sec;
   jit_memcpy_sec jit_got_sec;
-  (* Mark text/got readonly/executable *)
-  jit_mkexec jit_text_sec.sec_addr rosize;
   (* Register the global symbols *)
   List.iter (fun sym ->
                let (sec, ofs) = List.assoc sym !jit_symbols in
                let addr = Nativeint.add sec.sec_addr (Nativeint.of_int ofs) in
-               jit_registersym sym addr)
+               ndl_addsym sym addr)
             !jit_globals
 
 let jit_byte n =
   let sec = !jit_curr_sec in
-  let len = String.length sec.sec_content in
-  let pos = sec.sec_position in
+  let len = String.length sec.sec_buf in
+  let pos = sec.sec_pos in
   if pos = len then begin
     let content = String.create (len * 2) in
-    String.blit sec.sec_content 0 content 0 pos;
-    sec.sec_content <- content
+    String.blit sec.sec_buf 0 content 0 pos;
+    sec.sec_buf <- content
   end;
-  sec.sec_content.[pos] <- Char.chr (n land 0xff);
-  sec.sec_position <- pos + 1
+  sec.sec_buf.[pos] <- Char.chr (n land 0xff);
+  sec.sec_pos <- pos + 1
 
 let jit_word n =
   jit_byte n;
@@ -187,7 +181,7 @@ let jit_asciz s =
 
 let jit_align n =
   let sec = !jit_curr_sec in
-  let m = n - (sec.sec_position mod n) in
+  let m = n - (sec.sec_pos mod n) in
   if m <> n then
     if sec == jit_text_sec then
       match m with
@@ -203,7 +197,7 @@ let rec jit_skip = function
 
 let jit_symbol_define sym =
   let sec = !jit_curr_sec in
-  jit_symbols := (sym, (sec, sec.sec_position)) :: !jit_symbols
+  jit_symbols := (sym, (sec, sec.sec_pos)) :: !jit_symbols
 
 let jit_symbol_name sym =
   let buf = Buffer.create (1 + String.length sym) in
@@ -235,7 +229,7 @@ let jit_label lbl =
 
 let jit_reloc reloc =
   let sec = !jit_curr_sec in
-  jit_relocs := (sec, sec.sec_position, reloc) :: !jit_relocs
+  jit_relocs := (sec, sec.sec_pos, reloc) :: !jit_relocs
 
 let jit_reloc_abs64 sym =
   jit_reloc (RelocAbs64 sym);
@@ -1333,16 +1327,16 @@ let emit_item = function
       jit_align n
 
 let data l =
-  jit_data ();
+  jit_data();
   List.iter emit_item l
 
 (* Beginning / end of an assembly file *)
 
 let begin_assembly() =
-  jit_reset ();
-  jit_data ();
+  jit_reset();
+  jit_data();
   jit_symbol_globl (Compilenv.make_symbol (Some "data_begin"));
-  jit_text ();
+  jit_text();
   jit_symbol_globl (Compilenv.make_symbol (Some "code_begin"));
   if macosx then jit_byte 0x90 (* PR#4690 *)
 

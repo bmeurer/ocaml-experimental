@@ -28,6 +28,7 @@ open Lambda
 type res = Ok of Obj.t | Err of string
 type evaluation_outcome = Result of Obj.t | Exception of exn
 
+external ndl_run_jit: string -> Obj.t = "caml_natdynlink_run_jit"
 external ndl_run_toplevel: string -> string -> res
   = "caml_natdynlink_run_toplevel"
 external ndl_loadsym: string -> Obj.t = "caml_natdynlink_loadsym"
@@ -48,6 +49,9 @@ let dll_run dll entry =
         match Obj.magic r with
           | Ok x -> Result x
           | Err s -> fatal_error ("Opttoploop.dll_run " ^ s)
+
+let jit_run entry =
+  try Result (ndl_run_jit entry) with exn -> Exception exn
 
 
 type directive_fun =
@@ -131,26 +135,29 @@ let load_lambda ppf (size, lam) =
   if !Clflags.dump_rawlambda then fprintf ppf "%a@." Printlambda.lambda lam;
   let slam = Simplif.simplify_lambda lam in
   if !Clflags.dump_lambda then fprintf ppf "%a@." Printlambda.lambda slam;
+  if !Clflags.keep_asm_file then begin
+    let module Asmgen = Asmgen.Make(Emit) in
+    let dll = !phrase_name ^ ext_dll in
+    let fn = Filename.chop_extension dll in
+    Asmgen.compile_implementation ~toplevel:need_symbol fn ppf (size, lam);
+    Asmlink.call_linker_shared [fn ^ ext_obj] dll;
+    Sys.remove (fn ^ ext_obj);
 
-  let dll =
-    if !Clflags.keep_asm_file then !phrase_name ^ ext_dll
-    else Filename.temp_file ("caml" ^ !phrase_name) ext_dll
-  in
-  let fn = Filename.chop_extension dll in
-  Asmgen.compile_implementation ~toplevel:need_symbol fn ppf (size, lam);
-  Asmlink.call_linker_shared [fn ^ ext_obj] dll;
-  Sys.remove (fn ^ ext_obj);
-
-  let dll =
-    if Filename.is_implicit dll
-    then Filename.concat (Sys.getcwd ()) dll
-    else dll in
-  let res = dll_run dll !phrase_name in
-  (try Sys.remove dll with Sys_error _ -> ());
-  (* note: under windows, cannot remove a loaded dll
-     (should remember the handles, close them in at_exit, and then remove
-     files) *)
-  res
+    let dll =
+      if Filename.is_implicit dll
+      then Filename.concat (Sys.getcwd ()) dll
+      else dll in
+    let res = dll_run dll !phrase_name in
+    (try Sys.remove dll with Sys_error _ -> ());
+    (* note: under windows, cannot remove a loaded dll
+       (should remember the handles, close them in at_exit, and then remove
+       files) *)
+    res
+  end else begin
+    let module Asmgen = Asmgen.Make(Jit) in
+    Asmgen.compile ~toplevel:need_symbol ppf (size, lam);
+    jit_run !phrase_name
+  end
 
 (* Print the outcome of an evaluation *)
 
