@@ -29,6 +29,12 @@
 #include "osdeps.h"
 #include "fail.h"
 
+#if 0
+# define D(fmt, ...) do { D((fmt), ##__VA_ARGS__) } while (0)
+#else
+# define D(fmt, ...) do {} while (0)
+#endif
+
 struct symbol {
   struct symbol *next;
   void          *addr;
@@ -50,8 +56,8 @@ static void *getsym(void *handle, char *module, char *name){
   void *addr = NULL;
   struct symbol *sym;
   char *fullname = name;
-  if (module) {
-    char *fullname = malloc(strlen(module) + strlen(name) + 5);
+  if (module != NULL) {
+    fullname = malloc(strlen(module) + strlen(name) + 5);
     sprintf(fullname, "caml%s%s", module, name);
   }
   for (sym = symbols; sym != NULL; sym = sym->next){
@@ -61,6 +67,7 @@ static void *getsym(void *handle, char *module, char *name){
     }
   }
   if (!addr) addr = caml_dlsym(handle, fullname);
+  D("getsym(\"%s\") = 0x%p\n", fullname, addr);
   if (name != fullname) free(fullname);
   return addr;
 }
@@ -177,6 +184,7 @@ CAMLprim value caml_natdynlink_loadsym(value symbol)
 
 CAMLprim value caml_natdynlink_run_jit(value symbol)
 {
+  D("caml_natdynlink_run_jit(\"%s\")\n", String_val(symbol));
   return caml_natdynlink_run(caml_rtld_default(), symbol);
 }
 
@@ -185,9 +193,10 @@ CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
   CAMLparam2 (text_size, data_size);
   CAMLlocal1 (res);
   size_t psize = getpagesize();
-  size_t tsize = ((Nativeint_val(text_size) + (psize - 1)) / psize) * psize;
-  size_t dsize = ((Nativeint_val(data_size) + (psize - 1)) / psize) * psize;
+  size_t tsize = ((Long_val(text_size) + (psize - 1)) / psize) * psize;
+  size_t dsize = ((Long_val(data_size) + (psize - 1)) / psize) * psize;
   char *text, *data;
+  D("caml_natdynlink_malloc(%ld, %ld)\n", (long)Long_val(text_size), (long)Long_val(data_size));
 
   text = (char *)mmap(NULL, tsize + dsize,
                       PROT_READ | PROT_WRITE,
@@ -205,12 +214,14 @@ CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
 
 CAMLprim value caml_natdynlink_memcpy(value dst, value src, value size)
 {
+  D("caml_natdynlink_memcpy(0x%p, 0x%p, %ld)\n", (void *)Nativeint_val(dst), String_val(src), Long_val(size));
   memcpy((void *)Nativeint_val(dst), String_val(src), Long_val(size));
   return Val_unit;
 }
 
 CAMLprim value caml_natdynlink_addsym(value name, value addr)
 {
+  D("caml_natdynlink_addsym(\"%s\", 0x%p)\n", String_val(name), (void *)Nativeint_val(addr));
   addsym(String_val(name), (void *)Nativeint_val(addr));
   return Val_unit;
 }
