@@ -29,8 +29,8 @@
 #include "osdeps.h"
 #include "fail.h"
 
-#if 0
-# define D(fmt, ...) do { D((fmt), ##__VA_ARGS__) } while (0)
+#if 1
+# define D(fmt, ...) do { fprintf(stderr, (fmt), ##__VA_ARGS__); } while (0)
 #else
 # define D(fmt, ...) do {} while (0)
 #endif
@@ -67,7 +67,7 @@ static void *getsym(void *handle, char *module, char *name){
     }
   }
   if (!addr) addr = caml_dlsym(handle, fullname);
-  D("getsym(\"%s\") = 0x%p\n", fullname, addr);
+  D("getsym(\"%s\") = %p\n", fullname, addr);
   if (name != fullname) free(fullname);
   return addr;
 }
@@ -101,7 +101,7 @@ CAMLprim value caml_natdynlink_open(value filename, value global)
     CAMLreturn(caml_copy_string(caml_dlerror()));
 
   sym = getsym(handle, NULL, "caml_plugin_header");
-  if (NULL == sym) {
+  if (NULL == sym){
     caml_dlclose(handle);
     CAMLreturn(caml_copy_string("not an OCaml plugin"));
   }
@@ -214,14 +214,14 @@ CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
 
 CAMLprim value caml_natdynlink_memcpy(value dst, value src, value size)
 {
-  D("caml_natdynlink_memcpy(0x%p, 0x%p, %ld)\n", (void *)Nativeint_val(dst), String_val(src), Long_val(size));
+  D("caml_natdynlink_memcpy(%p, %p, %ld)\n", (void *)Nativeint_val(dst), String_val(src), Long_val(size));
   memcpy((void *)Nativeint_val(dst), String_val(src), Long_val(size));
   return Val_unit;
 }
 
 CAMLprim value caml_natdynlink_addsym(value name, value addr)
 {
-  D("caml_natdynlink_addsym(\"%s\", 0x%p)\n", String_val(name), (void *)Nativeint_val(addr));
+  D("caml_natdynlink_addsym(\"%s\", %p)\n", String_val(name), (void *)Nativeint_val(addr));
   addsym(String_val(name), (void *)Nativeint_val(addr));
   return Val_unit;
 }
