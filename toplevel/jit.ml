@@ -545,9 +545,9 @@ let jit_aluq op src dst =
       jit_mod_rm_reg rexw 0x81 rm op;
       jit_long (Nativeint.to_int n)
   | rm, Register reg ->
-      jit_mod_rm_reg rexw ((op lsl 3) + 1) rm reg
+      jit_mod_rm_reg rexw ((op lsl 3) + 3) rm reg
   | Register reg, rm ->
-      jit_mod_rm_reg rexw ((op lsl 3) + 2) rm reg
+      jit_mod_rm_reg rexw ((op lsl 3) + 1) rm reg
   | _ ->
       assert false
 
