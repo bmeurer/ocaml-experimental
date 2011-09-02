@@ -210,7 +210,7 @@ CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
   static char *text_ptr = NULL, *text_end = NULL;
   mlsize_t tsize = align(Long_val(text_size), 16);
   mlsize_t dsize = align(Long_val(data_size), 16);
-  mlsize_t psize, mlsize_t size;
+  mlsize_t psize, size;
   char *area, *text, *data;
 
   /* Memory allocation tries to reuse already allocated memory,
