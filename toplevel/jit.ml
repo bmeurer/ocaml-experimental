@@ -1141,7 +1141,7 @@ let emit_instr fallthrough i =
     | Lop(Inegf) ->
         jit_xorpd (Symbol(jit_symbol_name "caml_negf_mask")) (emit_reg i.res.(0))
     | Lop(Iabsf) ->
-        jit_andpd (Symbol(jit_symbol_name "caml_abs_mask")) (emit_reg i.res.(0))
+        jit_andpd (Symbol(jit_symbol_name "caml_absf_mask")) (emit_reg i.res.(0))
     | Lop(Iaddf | Isubf | Imulf | Idivf as floatop) ->
         (instr_for_floatop floatop) (emit_reg i.arg.(1)) (emit_reg i.res.(0))
     | Lop(Ifloatofint) ->
