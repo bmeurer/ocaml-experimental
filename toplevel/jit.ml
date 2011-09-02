@@ -780,7 +780,7 @@ let emit_addressing addr r n =
   | Iscaled(scale, d) ->
       memscale d (emit_reg r.(n)) scale
   | Iindexed2scaled(scale, d) ->
-      memindex d (emit_reg r.(n+1)) (emit_reg r.(n)) scale
+      memindex d (emit_reg r.(n)) (emit_reg r.(n+1)) scale
 
 (* Record live pointers at call points -- see Emitaux *)
 
