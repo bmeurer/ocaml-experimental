@@ -460,7 +460,7 @@ let jit_movabsq src dst =
 
 let jit_movb src dst =
   match src, dst with
-    rm, Register reg ->
+    Register reg, rm ->
       jit_mod_rm_reg rex 0x88 rm reg
   | _ ->
       assert false
