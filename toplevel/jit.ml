@@ -44,7 +44,7 @@ type reloc =
 type section =
   { mutable sec_buf: string;
     mutable sec_pos: int;
-    mutable sec_addr: nativeint }
+    mutable sec_addr: Addr.t }
 
 let new_sec () =
   { sec_buf = String.create 1024;
@@ -88,7 +88,7 @@ let jit_addr_of_symbol sym =
   try
     (* Check our own symbols first *)
     let (sec, ofs) = List.assoc sym !jit_symbols in
-    Nativeint.add sec.sec_addr (Nativeint.of_int ofs)
+    Addr.add sec.sec_addr (Addr.of_int ofs)
   with
     Not_found ->
       (* Fallback to the global symbol table *)
@@ -103,23 +103,23 @@ let jit_patch_reloc (sec, ofs, rel) =
   in match rel with
     RelocAbs64 sym ->
       let addr = jit_addr_of_symbol sym in
-      jit_patch_long sec.sec_buf ofs (Nativeint.to_int addr);
-      jit_patch_long sec.sec_buf (ofs + 4) (Nativeint.to_int (Nativeint.shift_right addr 32))
+      jit_patch_long sec.sec_buf ofs (Addr.to_int addr);
+      jit_patch_long sec.sec_buf (ofs + 4) (Addr.to_int (Addr.shift_right addr 32))
   | RelocRel32 sym ->
       let saddr = jit_addr_of_symbol sym in
-      let raddr = Nativeint.add sec.sec_addr (Nativeint.of_int (ofs + 4)) in
-      let rel32 = Nativeint.sub saddr raddr in
-      assert (rel32 >= (Nativeint.of_int32 Int32.min_int));
-      assert (rel32 <= (Nativeint.of_int32 Int32.max_int));
-      jit_patch_long sec.sec_buf ofs (Nativeint.to_int rel32)
+      let raddr = Addr.add sec.sec_addr (Addr.of_int (ofs + 4)) in
+      let rel32 = Addr.sub saddr raddr in
+      assert (rel32 >= (Addr.of_int32 Int32.min_int));
+      assert (rel32 <= (Addr.of_int32 Int32.max_int));
+      jit_patch_long sec.sec_buf ofs (Addr.to_int rel32)
   | RelocDiff32(sym1, sym2, disp) ->
       let saddr1 = jit_addr_of_symbol sym1 in
       let saddr2 = jit_addr_of_symbol sym2 in
-      let rel32 = Nativeint.sub saddr1 saddr2 in
-      let rel32 = Nativeint.add rel32 (Nativeint.of_int disp) in
-      assert (rel32 >= (Nativeint.of_int32 Int32.min_int));
-      assert (rel32 <= (Nativeint.of_int32 Int32.max_int));
-      jit_patch_long sec.sec_buf ofs (Nativeint.to_int rel32)
+      let rel32 = Addr.sub saddr1 saddr2 in
+      let rel32 = Addr.add rel32 (Addr.of_int disp) in
+      assert (rel32 >= (Addr.of_int32 Int32.min_int));
+      assert (rel32 <= (Addr.of_int32 Int32.max_int));
+      jit_patch_long sec.sec_buf ofs (Addr.to_int rel32)
 
 let jit_memcpy_sec sec =
   ndl_memcpy sec.sec_addr sec.sec_buf sec.sec_pos
@@ -132,7 +132,7 @@ let jit_finalize () =
   let (text, data) = ndl_malloc (text_size + got_size) data_size in
   jit_text_sec.sec_addr <- text;
   jit_data_sec.sec_addr <- data;
-  jit_got_sec.sec_addr <- Nativeint.add text (Nativeint.of_int text_size);
+  jit_got_sec.sec_addr <- Addr.add text (Addr.of_int text_size);
   (* Patch all relocations *)
   List.iter jit_patch_reloc !jit_relocs;
   (* Copy section content *)
@@ -142,7 +142,7 @@ let jit_finalize () =
   (* Register the global symbols *)
   List.iter (fun sym ->
                let (sec, ofs) = List.assoc sym !jit_symbols in
-               let addr = Nativeint.add sec.sec_addr (Nativeint.of_int ofs) in
+               let addr = Addr.add sec.sec_addr (Addr.of_int ofs) in
                ndl_addsym sym addr)
             !jit_globals
 
