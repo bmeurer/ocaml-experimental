@@ -533,6 +533,14 @@ partialclean::
 
 beforedepend:: asmcomp/scheduling.ml
 
+toplevel/jit.ml: toplevel/$(ARCH)/jit.ml
+	ln -s $(ARCH)/jit.ml toplevel/jit.ml
+
+partialclean::
+	rm -f toplevel/jit.ml
+
+beforedepend:: toplevel/jit.ml
+
 # Preprocess the code emitters
 
 asmcomp/emit.ml: asmcomp/$(ARCH)/emit.mlp tools/cvt_emit
