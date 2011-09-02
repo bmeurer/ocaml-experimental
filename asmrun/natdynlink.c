@@ -41,15 +41,27 @@ struct symbol {
   char           name[1];
 };
 
-static struct symbol *symbols = NULL;
+#define SYMTBLSZ 113
+
+static struct symbol *symtbl[SYMTBLSZ] = { NULL, };
+
+static uint32 symhash(const signed char *p){
+  /* This actually implements the widely used string hash apparently
+   * posted by Daniel Bernstein to comp.lang.c once upon a time... */
+  uint32 h = 5381;
+  while (*p != '\0')
+    h = (h << 5) + h + *p++;
+  return h % SYMTBLSZ;
+}
 
 static void addsym(char *name, void *addr){
   mlsize_t namelen = strlen(name);
   struct symbol *sym = malloc(sizeof(struct symbol) + namelen);
+  struct symbol **symtblp = &symtbl[symhash(name)];
   memcpy(sym->name, name, namelen + 1);
   sym->addr = addr;
-  sym->next = symbols;
-  symbols = sym;
+  sym->next = *symtblp;
+  *symtblp = sym;
 }
 
 static void *getsym(void *handle, char *module, char *name){
@@ -60,7 +72,7 @@ static void *getsym(void *handle, char *module, char *name){
     fullname = malloc(strlen(module) + strlen(name) + 5);
     sprintf(fullname, "caml%s%s", module, name);
   }
-  for (sym = symbols; sym != NULL; sym = sym->next){
+  for (sym = symtbl[symhash(fullname)]; sym != NULL; sym = sym->next){
     if (strcmp(sym->name, fullname) == 0){
       addr = sym->addr;
       break;
