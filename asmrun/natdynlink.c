@@ -29,7 +29,7 @@
 #include "osdeps.h"
 #include "fail.h"
 
-#if 1
+#if 0
 # define D(fmt, ...) do { fprintf(stderr, (fmt), ##__VA_ARGS__); } while (0)
 #else
 # define D(fmt, ...) do {} while (0)
