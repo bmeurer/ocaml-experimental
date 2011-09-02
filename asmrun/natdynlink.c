@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include "misc.h"
@@ -202,26 +203,82 @@ CAMLprim value caml_natdynlink_run_jit(value symbol)
 
 CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
 {
+#define align(x, n) ((((x) + ((n) - 1)) / (n)) * (n))
   CAMLparam2 (text_size, data_size);
   CAMLlocal1 (res);
-  size_t psize = getpagesize();
-  size_t tsize = ((Long_val(text_size) + (psize - 1)) / psize) * psize;
-  size_t dsize = ((Long_val(data_size) + (psize - 1)) / psize) * psize;
-  char *text, *data;
-  D("caml_natdynlink_malloc(%ld, %ld)\n", (long)Long_val(text_size), (long)Long_val(data_size));
+  static char *data_ptr = NULL, *data_end = NULL;
+  static char *text_ptr = NULL, *text_end = NULL;
+  mlsize_t tsize = align(Long_val(text_size), 16);
+  mlsize_t dsize = align(Long_val(data_size), 16);
+  mlsize_t psize, mlsize_t size;
+  char *area, *text, *data;
 
-  text = (char *)mmap(NULL, tsize + dsize,
-                      PROT_READ | PROT_WRITE,
-                      MAP_ANON | MAP_PRIVATE,
-                      -1, 0);
-  if (text == (char *)MAP_FAILED) caml_raise_out_of_memory();
-  mprotect(text, tsize, PROT_EXEC | PROT_READ | PROT_WRITE);
-  data = text + tsize;
+  /* Memory allocation tries to reuse already allocated memory,
+   * which works in many cases. For 64bit architectures we ensure
+   * that all data memory is within 32bit range from the text
+   * memory allocated.
+   */
+  for (;;){
+    /* Check if leftover space is sufficient */
+    if (dsize < data_end - data_ptr && tsize < text_end - text_ptr){
+      text = text_ptr; text_ptr += tsize;
+      data = data_ptr; data_ptr += dsize;
+      break;
+    }
+
+    psize = getpagesize();
+    if (dsize < data_end - data_ptr){
+      /* Need new text area */
+      size = 2 * align(tsize, psize);
+      area = (char *)mmap(NULL, size,
+                          PROT_EXEC | PROT_READ | PROT_WRITE,
+                          MAP_ANON | MAP_PRIVATE, -1, 0);
+      if (area == (char *)MAP_FAILED) caml_raise_out_of_memory();
+      text_ptr = area;
+      text_end = area + size;
+    }
+    else if (tsize < text_end - text_ptr){
+      /* Need new data area */
+      size = 2 * align(dsize, psize);
+      area = (char *)mmap(NULL, size,
+                          PROT_READ | PROT_WRITE,
+                          MAP_ANON | MAP_PRIVATE, -1, 0);
+      if (area == (char *)MAP_FAILED) caml_raise_out_of_memory();
+      data_ptr = area;
+      data_end = area + size;
+    }
+    else{
+      /* Need both new data and new text area */
+      mlsize_t tsize_aligned = 2 * align(tsize, psize);
+      mlsize_t dsize_aligned = 2 * align(dsize, psize);
+      size = tsize_aligned + dsize_aligned;
+      area = (char *)mmap(NULL, size,
+                          PROT_EXEC | PROT_READ | PROT_WRITE,
+                          MAP_ANON | MAP_PRIVATE, -1, 0);
+      if (area == (char *)MAP_FAILED) caml_raise_out_of_memory();
+      mprotect(area + tsize_aligned, dsize_aligned, PROT_READ | PROT_WRITE);
+      text_ptr = area;
+      text_end = text_ptr + tsize_aligned;
+      data_ptr = text_end;
+      data_end = data_ptr + dsize_aligned;
+    }
+
+#ifdef ARCH_SIXTYFOUR
+    if (llabs(text_end - data_ptr) >= 2147483647
+        || llabs(data_end - text_ptr) >= 2147483647){
+      /* Out of 32bit addressing range, try again... */
+      munmap(area, size);
+      text_ptr = text_end = NULL;
+      data_ptr = data_end = NULL;
+    }
+#endif
+  }
 
   res = caml_alloc_tuple(2);
   Field(res, 0) = (value)caml_copy_nativeint((intnat)text);
   Field(res, 1) = (value)caml_copy_nativeint((intnat)data);
   CAMLreturn(res);
+#undef align
 }
 
 CAMLprim value caml_natdynlink_memcpy(value dst, value src, value size)
