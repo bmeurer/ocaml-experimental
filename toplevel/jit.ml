@@ -96,10 +96,10 @@ let jit_addr_of_symbol sym =
 
 let jit_patch_reloc (sec, ofs, rel) =
   let jit_patch_long str ofs n =
-    str.[ofs] <- Char.chr (n land 0xff);
-    str.[ofs + 1] <- Char.chr ((n asr 8) land 0xff);
-    str.[ofs + 2] <- Char.chr ((n asr 16) land 0xff);
-    str.[ofs + 3] <- Char.chr ((n asr 24) land 0xff);
+    String.unsafe_set str ofs (Char.chr (n land 0xff));
+    String.unsafe_set str (ofs + 1) (Char.chr ((n asr 8) land 0xff));
+    String.unsafe_set str (ofs + 2) (Char.chr ((n asr 16) land 0xff));
+    String.unsafe_set str (ofs + 3) (Char.chr ((n asr 24) land 0xff))
   in match rel with
     RelocAbs64 sym ->
       let addr = jit_addr_of_symbol sym in
@@ -109,23 +109,18 @@ let jit_patch_reloc (sec, ofs, rel) =
       let saddr = jit_addr_of_symbol sym in
       let raddr = Addr.add sec.sec_addr (Addr.of_int (ofs + 4)) in
       let rel32 = Addr.sub saddr raddr in
-      assert (rel32 >= (Addr.of_int32 Int32.min_int));
-      assert (rel32 <= (Addr.of_int32 Int32.max_int));
       jit_patch_long sec.sec_buf ofs (Addr.to_int rel32)
   | RelocDiff32(sym1, sym2, disp) ->
       let saddr1 = jit_addr_of_symbol sym1 in
       let saddr2 = jit_addr_of_symbol sym2 in
       let rel32 = Addr.sub saddr1 saddr2 in
       let rel32 = Addr.add rel32 (Addr.of_int disp) in
-      assert (rel32 >= (Addr.of_int32 Int32.min_int));
-      assert (rel32 <= (Addr.of_int32 Int32.max_int));
       jit_patch_long sec.sec_buf ofs (Addr.to_int rel32)
 
 let jit_memcpy_sec sec =
   ndl_memcpy sec.sec_addr sec.sec_buf sec.sec_pos
 
 let jit_finalize () =
-  assert (jit_text_sec.sec_pos > 0);
   let text_size = Misc.align jit_text_sec.sec_pos 8 in
   let got_size = jit_got_sec.sec_pos in
   let data_size = jit_data_sec.sec_pos in
@@ -152,10 +147,10 @@ let jit_byte n =
   let pos = sec.sec_pos in
   if pos = len then begin
     let content = String.create (len * 2) in
-    String.blit sec.sec_buf 0 content 0 pos;
+    String.unsafe_blit sec.sec_buf 0 content 0 pos;
     sec.sec_buf <- content
   end;
-  sec.sec_buf.[pos] <- Char.chr (n land 0xff);
+  String.unsafe_set sec.sec_buf pos (Char.chr (n land 0xff));
   sec.sec_pos <- pos + 1
 
 let jit_word n =
