@@ -467,7 +467,7 @@ let jit_movb src dst =
 
 let jit_movw src dst =
   match src, dst with
-    rm, Register reg ->
+    Register reg, rm ->
       jit_byte 0x66;
       jit_mod_rm_reg rex 0x89 rm reg
   | _ ->
