@@ -80,6 +80,8 @@ OTHEROBJS=\
   $(TOPDIR)/asmcomp/split.cmo \
   $(TOPDIR)/asmcomp/interf.cmo \
   $(TOPDIR)/asmcomp/coloring.cmo \
+  $(TOPDIR)/asmcomp/interval.cmo \
+  $(TOPDIR)/asmcomp/linscan.cmo \
   $(TOPDIR)/asmcomp/reloadgen.cmo \
   $(TOPDIR)/asmcomp/reload.cmo \
   $(TOPDIR)/asmcomp/printlinear.cmo \
