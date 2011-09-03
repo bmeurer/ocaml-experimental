@@ -15,29 +15,25 @@
 
 (* Live intervals for the linear scan register allocator. *)
 
-open Format
-
- 
 type range =
   {
-    mutable rbegin : int;
-    mutable rend : int;
+    mutable rbegin: int;
+    mutable rend: int;
   }
 
-type interval = 
+type t = 
   { 
-      mutable reg : Reg.t;
-      mutable ibegin : int;
-      mutable iend : int;
-      mutable ranges : range list;
+    mutable reg: Reg.t;
+    mutable ibegin: int;
+    mutable iend: int;
+    mutable ranges: range list;
   }
 
-
-val all_intervals : unit -> interval list
-val all_fixed_intervals: unit -> interval list
-val debug_intervals: formatter ->  Mach.fundecl -> unit
+val all_intervals: unit -> t list
+val all_fixed_intervals: unit -> t list
+val debug_intervals: Format.formatter ->  Mach.fundecl -> unit
 val build_intervals: Mach.fundecl -> unit
-val live_on: interval -> int -> bool
+val live_on: t -> int -> bool
 val overlapping_ranges: range -> range -> bool
-val overlapping: interval -> interval -> bool
+val overlapping: t -> t -> bool
 val strip_expired_ranges: range list -> int -> range list

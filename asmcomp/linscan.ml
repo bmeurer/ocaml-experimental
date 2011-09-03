@@ -21,78 +21,55 @@ open List
 open Format
 open Mach
 
+(* Live intervals per register class *)
 
-type active_t =
-{
-    mutable active : interval list;
-    mutable inactive : interval list;
-    mutable fixed : interval list;
-}
+type class_intervals =
+  {
+    mutable ci_fixed: Interval.t list;
+    mutable ci_active: Interval.t list;
+    mutable ci_inactive: Interval.t list;
+  }
 
+let active = Array.init Proc.num_register_classes (fun _ -> {
+  ci_fixed = [];
+  ci_active = [];
+  ci_inactive = []
+})
 
-let active = Array.init Proc.num_register_classes (fun i -> {active = []; inactive = []; fixed= [] })
+(* Insert interval into list sorted by end position *)
 
-let rec insert_into active current = 
-  begin match active with
-  | [] -> [current]
-  | interval::tl ->
-    (* check code for <= or < *)
-    if interval.iend <= current.iend then 
-      current :: active
-    else
-      interval :: insert_into tl current
-  end
+let rec insert_interval_sorted i = function
+    [] -> [i]
+  | j :: _ as il when j.iend <= i.iend -> i :: il
+  | j :: il -> j :: insert_interval_sorted i il
 
+let rec release_expired_fixed pos = function
+    i :: il when i.iend > pos ->
+      i.ranges <- Interval.strip_expired_ranges i.ranges pos;
+      i :: release_expired_fixed pos il
+  | _ -> []
 
-let rec release_expired_fixed pos intervals =
-  begin match intervals with
-  | [] -> []
-  | interval::tl ->
-      if interval.iend > pos then begin
-        interval.ranges <- Interval.strip_expired_ranges interval.ranges pos;
-        interval :: release_expired_fixed pos tl
+let rec release_expired_active ci pos = function
+    i :: il when i.iend > pos ->
+      i.ranges <- Interval.strip_expired_ranges i.ranges pos;
+      if Interval.live_on i pos then
+        i :: release_expired_active ci pos il
+      else begin
+        ci.ci_inactive <- insert_interval_sorted i ci.ci_inactive;
+        release_expired_active ci pos il
       end
-      else
-        []
- end
+  | _ -> []
 
- 
-let rec release_expired_active active_cl pos intervals =
-  begin match intervals with
-  | [] -> []
-  | interval::tl ->
-      if interval.iend > pos then begin
-        interval.ranges <- Interval.strip_expired_ranges interval.ranges pos;
-        if Interval.live_on interval pos then
-          interval :: release_expired_active active_cl pos tl
-        else begin
-          active_cl.inactive <- insert_into active_cl.inactive interval;
-          release_expired_active active_cl pos tl
-        end
+let rec release_expired_inactive ci pos = function
+    i :: il when i.iend > pos ->
+      i.ranges <- Interval.strip_expired_ranges i.ranges pos;
+      if not (Interval.live_on i pos) then 
+        i :: release_expired_inactive ci pos il
+      else begin
+        ci.ci_active <- insert_interval_sorted i ci.ci_active;
+        release_expired_inactive ci pos il
       end
-      else
-        []
- end
-
-let rec release_expired_inactive active_cl pos intervals =
-  begin match intervals with
-  | [] -> []
-  | interval::tl ->
-      if interval.iend > pos then begin
-        interval.ranges <- Interval.strip_expired_ranges interval.ranges pos;
-        if not (Interval.live_on interval pos) then 
-          interval :: release_expired_inactive active_cl pos tl
-        else begin
-          active_cl.active <- insert_into active_cl.active interval;
-          release_expired_inactive active_cl pos tl
-        end
-      end
-      else
-        []
- end
-
-
-   
+  | _ -> []
 
 let get_stack_slot cl = 
   let nslots = Proc.num_stack_slots.(cl) in
@@ -100,13 +77,6 @@ let get_stack_slot cl =
   nslots
     
 
-
-let pop_active active = 
-  begin match active with
-  | [] -> []
-  | _::tl -> tl
-  end
-  
 
 (* find a register for the given interval and assigns this
    register. The interval is inserted into active.
@@ -129,7 +99,7 @@ let try_alloc_free_register interval  =
   else if num = 0 then false (* there are not registers for this class *)
   else begin
     let first_reg = Proc.first_available_register.(cl) in
-    let active_cl = active.(cl) in
+    let ci = active.(cl) in
 
     (* create array containing all possible free regs *)
     let regs = Array.make num true in
@@ -149,7 +119,7 @@ let try_alloc_free_register interval  =
       end
     in
 
-    remove_bound active_cl.active;
+    remove_bound ci.ci_active;
       
     (* remove all overlapping registers from the free array *)
     let rec remove_bound_overlapping fix =
@@ -167,8 +137,8 @@ let try_alloc_free_register interval  =
         end
       end
     in
-    remove_bound_overlapping active_cl.inactive;
-    remove_bound_overlapping active_cl.fixed;
+    remove_bound_overlapping ci.ci_inactive;
+    remove_bound_overlapping ci.ci_fixed;
       
 
     let rec find_first_free_reg c =
@@ -184,107 +154,66 @@ let try_alloc_free_register interval  =
       interval.reg.Reg.loc <- Reg.Reg (first_reg + first_free_reg);
       interval.reg.Reg.spill <- false;
       (* and insert the current interval into active *)
-      active_cl.active <- insert_into active_cl.active interval;
+      ci.ci_active <- insert_interval_sorted interval ci.ci_active;
       true
     end;
   end
  
-
-let allocate_blocked_register interval =
-  let cl = Proc.register_class interval.reg in
-  let active_cl = active.(cl) in
-  
-  
-  if active_cl.active = [] then begin
-    (* this is the special case when there are no register at all
-       in the register class. This can happen e.g. for float Regs on i386 *)
-    interval.reg.Reg.loc <- Reg.Stack(Reg.Local (get_stack_slot cl));
-    interval.reg.Reg.spill <- true
-  end
-  else begin
-    
-    (* get the latest interval in active *)
-    let last_active = List.hd active_cl.active in
-    
-    if last_active.iend > interval.iend then begin
-      (* last interval in active ends latest -> spill it*)
-      
-      (* transfer the register from the active in the current interval *)
-      begin match last_active.reg.Reg.loc with 
-      | Reg.Reg r -> interval.reg.Reg.loc <- Reg.Reg r
+let allocate_blocked_register i =
+  let cl = Proc.register_class i.reg in
+  let ci = active.(cl) in
+  begin match ci.ci_active with
+    ilast :: il when ilast.iend > i.iend ->
+      (* Last interval in active is the last interval, so spill it. *)
+      begin match ilast.reg.Reg.loc with 
+        Reg.Reg r ->
+          (* Use register from last interval for current interval *)
+          i.reg.Reg.loc <- Reg.Reg r
       | _ -> ()
       end;
-      
-      (* remove the latest interval from active ... *)
-      active_cl.active <- pop_active active_cl.active;
-      (* ... and insert the current *)
-      active_cl.active <- insert_into active_cl.active interval;
-      
-      (* now get a new stack slot for the spilled register *)
-      last_active.reg.Reg.loc <- Reg.Stack(Reg.Local (get_stack_slot cl));
-      last_active.reg.Reg.spill <- true
-    end
-    else begin
-      (* the current interval ends latest -> spill it *)
-      interval.reg.Reg.loc <- Reg.Stack(Reg.Local (get_stack_slot cl));
-      interval.reg.Reg.spill <- true
-    end;
-  end;
-  ()
+      (* Remove the last interval from active and insert the current *)
+      ci.ci_active <- insert_interval_sorted i il;
+      (* Now get a new stack slot for the spilled register *)
+      ilast.reg.Reg.loc <- Reg.Stack(Reg.Local(get_stack_slot cl));
+      ilast.reg.Reg.spill <- true
+  | _ ->
+      (* Either the current interval is last and we have to spill it,
+         or there are no registers at all in the register class (i.e.
+         floating point class on i386). *)
+      i.reg.Reg.loc <- Reg.Stack(Reg.Local(get_stack_slot cl));
+      i.reg.Reg.spill <- true
+  end
 
-
-let handle_interval interval =
-  let position = interval.ibegin in
-  
-  (* release all intervals that have been expired at the current step*)
-  for i = 0 to Proc.num_register_classes - 1 do
-    let active_cl = active.(i) in
-    active_cl.active    <- release_expired_active active_cl position active_cl.active;
-    active_cl.inactive  <- release_expired_inactive active_cl position active_cl.inactive;
-    active_cl.fixed     <- release_expired_fixed position active_cl.fixed;
+let handle_interval i =
+  let pos = i.ibegin in
+  (* Release all intervals that have been expired at the current position *)
+  for cl = 0 to Proc.num_register_classes - 1 do
+    let ci = active.(cl) in
+    ci.ci_fixed <- release_expired_fixed pos ci.ci_fixed;
+    ci.ci_active <- release_expired_active ci pos ci.ci_active;
+    ci.ci_inactive <- release_expired_inactive ci pos ci.ci_inactive
   done;
-  
-  
-  (* find a register for allocation *)
-  if not (try_alloc_free_register interval) then 
-    (* a valid free register could not be found, so we have to
-       decide which interval is to be spilled *)
-    allocate_blocked_register interval
-
-(* create active liste for every register class *)
-let initialize_interval_lists intervals =
-
-  
-  for i=0 to Proc.num_register_classes - 1 do 
-    let active_cl = active.(i) in
-    (* start with empty actives *)
-    active_cl.active    <- [];
-    active_cl.inactive  <- [];
-    active_cl.fixed     <- [];
-  done;
-
-  (* add all fixed intervals to the list of active_fixed intervals *)
-  let rec add_fixed_intervals intervals =
-    begin match intervals with
-    | [] -> ()
-    | i :: tl -> 
-      let active_cl = active.(Proc.register_class i.reg) in
-      active_cl.fixed <- i :: active_cl.fixed;
-      add_fixed_intervals tl
-    end in
-  add_fixed_intervals intervals;
-
-  for i = 0 to Proc.num_register_classes - 1 do
-    let active_cl = active.(i) in
-    active_cl.fixed <- List.sort (fun i0 i1 -> i1.iend - i0.iend) active_cl.fixed
-  done
+  (* Find a register to allocate *)
+  if not (try_alloc_free_register i) then
+    (* No free register, need to decide which interval to spill *)
+    allocate_blocked_register i
 
 let allocate_registers() =
-  (* Initialize the stack slots *)
-  for i = 0 to Proc.num_register_classes - 1 do
-    Proc.num_stack_slots.(i) <- 0
+  (* Initialize the stack slots and interval lists *)
+  for cl = 0 to Proc.num_register_classes - 1 do
+    (* Start with empty interval lists *)
+    active.(cl) <- {
+      ci_fixed = [];
+      ci_active = [];
+      ci_inactive = []
+    };
+    Proc.num_stack_slots.(cl) <- 0
   done;
-  (* Create the active lists *)
-  initialize_interval_lists (Interval.all_fixed_intervals());
+  (* Add all fixed intervals (sorted by end position) *)
+  List.iter
+    (fun i ->
+      let ci = active.(Proc.register_class i.reg) in
+      ci.ci_fixed <- insert_interval_sorted i ci.ci_fixed)
+    (Interval.all_fixed_intervals());
   (* Walk all the intervals within the list *)
   List.iter handle_interval (Interval.all_intervals())

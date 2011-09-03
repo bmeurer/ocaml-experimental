@@ -21,21 +21,21 @@ open Reg
 
 type range =
   {
-    mutable rbegin : int;
-    mutable rend : int;
+    mutable rbegin: int;
+    mutable rend: int;
   }
 
-type interval = 
+type t = 
   { 
-      mutable reg : Reg.t;
-      mutable ibegin : int;
-      mutable iend : int;
-      mutable ranges : range list;
+    mutable reg: Reg.t;
+    mutable ibegin: int;
+    mutable iend: int;
+    mutable ranges: range list;
   }
 
 
-let interval_list = ref ([] : interval list)
-let fixed_interval_list = ref ([] : interval list)
+let interval_list = ref ([] : t list)
+let fixed_interval_list = ref ([] : t list)
 let all_intervals() = !interval_list
 let all_fixed_intervals() = !fixed_interval_list
 
