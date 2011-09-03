@@ -71,6 +71,7 @@ OTHEROBJS=\
   $(TOPDIR)/asmcomp/compilenv.cmo \
   $(TOPDIR)/asmcomp/closure.cmo \
   $(TOPDIR)/asmcomp/cmmgen.cmo \
+  $(TOPDIR)/asmcomp/interval.cmo \
   $(TOPDIR)/asmcomp/printmach.cmo \
   $(TOPDIR)/asmcomp/selectgen.cmo \
   $(TOPDIR)/asmcomp/selection.cmo \
@@ -80,7 +81,6 @@ OTHEROBJS=\
   $(TOPDIR)/asmcomp/split.cmo \
   $(TOPDIR)/asmcomp/interf.cmo \
   $(TOPDIR)/asmcomp/coloring.cmo \
-  $(TOPDIR)/asmcomp/interval.cmo \
   $(TOPDIR)/asmcomp/linscan.cmo \
   $(TOPDIR)/asmcomp/reloadgen.cmo \
   $(TOPDIR)/asmcomp/reload.cmo \

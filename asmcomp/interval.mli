@@ -31,7 +31,6 @@ type t =
 
 val all_intervals: unit -> t list
 val all_fixed_intervals: unit -> t list
-val debug_intervals: Format.formatter ->  Mach.fundecl -> unit
 val build_intervals: Mach.fundecl -> unit
 val live_on: t -> int -> bool
 val overlapping_ranges: range -> range -> bool

@@ -45,7 +45,7 @@ let rec regalloc ppf round fd =
   if !use_linscan  then begin
     (* Linear Scan *)
     Interval.build_intervals fd;
-    if !dump_interval then Interval.debug_intervals ppf fd;
+    if !dump_interval then Printmach.intervals ppf ();
     Linscan.allocate_registers()
   end else begin
     (* Graph Coloring *)

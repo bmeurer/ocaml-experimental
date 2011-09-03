@@ -82,23 +82,6 @@ let rec strip_expired_ranges ranges pos =
   
 
 
-let debug_intervals ppf fd =
-  Format.fprintf ppf "*** Intervals\n";
-  Format.fprintf ppf "%s\n" fd.fun_name;
-
-  let dump_interval i =
-      Format.fprintf ppf "  ";
-      Printmach.reg ppf i.reg;
-      List.iter (fun r ->
-	      Format.fprintf ppf " [%d;%d[ " r.rbegin r.rend
-	    ) i.ranges;
-      Format.fprintf ppf "\n"
-  in
-  List.iter dump_interval !fixed_interval_list;
-  List.iter dump_interval !interval_list;
-  ()
-
-
 let get_and_initialize_interval intervals reg pos_tst pos_set use_kind =
   let interval = intervals.(reg.stamp) in
   if interval.iend = 0 then begin
