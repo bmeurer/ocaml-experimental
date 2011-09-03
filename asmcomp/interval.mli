@@ -2,14 +2,14 @@
 (*                                                                     *)
 (*                           Objective Caml                            *)
 (*                                                                     *)
-(*                          Marcell Fischbach                          *)
+(*                 Marcell Fischbach, University of Siegen             *)
+(*                  Benedikt Meurer, University of Siegen              *)
 (*                                                                     *)
-(*  Copyright 2011 University of Siegen. All rights reserved.          *)
-(*  This file is distributed  under the terms of the                   *)
-(*  Q Public License version 1.0.                                      *)
+(*    Copyright 2011 Lehrstuhl für Compilerbau und Softwareanalyse,    *)
+(*    Universität Siegen. All rights reserved. This file is distri-    *)
+(*    buted under the terms of the Q Public License version 1.0.       *)
 (*                                                                     *)
 (***********************************************************************)
-
 
 
 open Format
