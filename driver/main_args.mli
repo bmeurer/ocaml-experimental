@@ -115,6 +115,7 @@ module type Optcomp_options = sig
   val _intf_suffix : string -> unit
   val _labels : unit -> unit
   val _linkall : unit -> unit
+  val _linscan : unit -> unit
   val _no_app_funct : unit -> unit
   val _noassert : unit -> unit
   val _noautolink : unit -> unit
@@ -141,8 +142,6 @@ module type Optcomp_options = sig
   val _warn_error : string -> unit
   val _warn_help : unit -> unit
   val _where : unit -> unit
-
-  val _linscan : unit -> unit
 
   val _nopervasives : unit -> unit
   val _dparsetree : unit -> unit
@@ -172,6 +171,7 @@ module type Opttop_options = sig
   val _init : string -> unit
   val _inline : int -> unit
   val _labels : unit -> unit
+  val _linscan : unit -> unit
   val _no_app_funct : unit -> unit
   val _noassert : unit -> unit
   val _nolabels : unit -> unit
@@ -187,8 +187,6 @@ module type Opttop_options = sig
   val _w : string -> unit
   val _warn_error : string -> unit
   val _warn_help : unit -> unit
-
-  val _linscan : unit -> unit
 
   val _dparsetree : unit -> unit
   val _drawlambda : unit -> unit

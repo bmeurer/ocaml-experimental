@@ -115,6 +115,7 @@ module Options = Main_args.Make_optcomp_options (struct
   let _intf_suffix s = Config.interface_suffix := s
   let _labels = clear classic
   let _linkall = set link_everything
+  let _linscan = set use_linscan
   let _no_app_funct = clear applicative_functors
   let _noassert = set noassert
   let _noautolink = set no_auto_link
@@ -141,8 +142,6 @@ module Options = Main_args.Make_optcomp_options (struct
   let _warn_error s = Warnings.parse_options true s
   let _warn_help = Warnings.help_warnings
   let _where () = print_standard_library ()
-
-  let _linscan = set use_linscan
 
   let _nopervasives = set nopervasives
   let _dparsetree = set dump_parsetree

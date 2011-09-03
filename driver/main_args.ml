@@ -121,6 +121,10 @@ let mk_linkall f =
   "-linkall", Arg.Unit f, " Link all modules, even unused ones"
 ;;
 
+let mk_linscan f =
+  "-linscan", Arg.Unit f, " Use the linear scan register allocator"
+;;
+
 let mk_make_runtime f =
   "-make-runtime", Arg.Unit f,
   " Build a runtime system with given C objects and libraries"
@@ -297,11 +301,6 @@ let mk_nopervasives f =
 let mk_use_prims f =
   "-use-prims", Arg.String f, "<file>  (undocumented)"
 ;;
-
-let mk_linscan f =
-  "-linscan", Arg.Unit f, " (undocumented)"
-;;
-
 
 let mk_dparsetree f =
   "-dparsetree", Arg.Unit f, " (undocumented)"
@@ -482,6 +481,7 @@ module type Optcomp_options = sig
   val _intf_suffix : string -> unit
   val _labels : unit -> unit
   val _linkall : unit -> unit
+  val _linscan : unit -> unit
   val _no_app_funct : unit -> unit
   val _noassert : unit -> unit
   val _noautolink : unit -> unit
@@ -508,8 +508,6 @@ module type Optcomp_options = sig
   val _warn_error : string -> unit
   val _warn_help : unit -> unit
   val _where : unit -> unit
-
-  val _linscan : unit -> unit
 
   val _nopervasives : unit -> unit
   val _dparsetree : unit -> unit
@@ -539,6 +537,7 @@ module type Opttop_options = sig
   val _init : string -> unit
   val _inline : int -> unit
   val _labels : unit -> unit
+  val _linscan : unit -> unit
   val _no_app_funct : unit -> unit
   val _noassert : unit -> unit
   val _nolabels : unit -> unit
@@ -554,8 +553,6 @@ module type Opttop_options = sig
   val _w : string -> unit
   val _warn_error : string -> unit
   val _warn_help : unit -> unit
-
-  val _linscan : unit -> unit
 
   val _dparsetree : unit -> unit
   val _drawlambda : unit -> unit
@@ -698,6 +695,7 @@ struct
     mk_intf_suffix F._intf_suffix;
     mk_labels F._labels;
     mk_linkall F._linkall;
+    mk_linscan F._linscan;
     mk_no_app_funct F._no_app_funct;
     mk_noassert F._noassert;
     mk_noautolink_opt F._noautolink;
@@ -724,8 +722,6 @@ struct
     mk_warn_error F._warn_error;
     mk_warn_help F._warn_help;
     mk_where F._where;
-
-    mk_linscan F._linscan;
 
     mk_nopervasives F._nopervasives;
     mk_dparsetree F._dparsetree;
@@ -757,6 +753,7 @@ module Make_opttop_options (F : Opttop_options) = struct
     mk_init F._init;
     mk_inline F._inline;
     mk_labels F._labels;
+    mk_linscan F._linscan;
     mk_no_app_funct F._no_app_funct;
     mk_noassert F._noassert;
     mk_nolabels F._nolabels;
@@ -772,8 +769,6 @@ module Make_opttop_options (F : Opttop_options) = struct
     mk_w F._w;
     mk_warn_error F._warn_error;
     mk_warn_help F._warn_help;
-
-    mk_linscan F._linscan;
 
     mk_dparsetree F._dparsetree;
     mk_drawlambda F._drawlambda;
