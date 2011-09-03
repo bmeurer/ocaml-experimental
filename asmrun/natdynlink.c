@@ -46,9 +46,10 @@ struct symbol {
 
 static struct symbol *symtbl[SYMTBLSZ] = { NULL, };
 
-static uint32 symhash(const signed char *p){
+static uint32 symhash(const void *v){
   /* This actually implements the widely used string hash apparently
    * posted by Daniel Bernstein to comp.lang.c once upon a time... */
+  const signed char *p = v;
   uint32 h = 5381;
   while (*p != '\0')
     h = (h << 5) + h + *p++;
@@ -203,13 +204,14 @@ CAMLprim value caml_natdynlink_run_jit(value symbol)
 
 CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
 {
-#define align(x, n) ((((x) + ((n) - 1)) / (n)) * (n))
+#define ABS(x) (((x) < 0) ? -(x) : (x))
+#define ALIGN(x, n) ((((x) + ((n) - 1)) / (n)) * (n))
   CAMLparam2 (text_size, data_size);
   CAMLlocal1 (res);
   static char *data_ptr = NULL, *data_end = NULL;
   static char *text_ptr = NULL, *text_end = NULL;
-  mlsize_t tsize = align(Long_val(text_size), 16);
-  mlsize_t dsize = align(Long_val(data_size), 16);
+  mlsize_t tsize = ALIGN(Long_val(text_size), 16);
+  mlsize_t dsize = ALIGN(Long_val(data_size), 16);
   mlsize_t psize, size;
   char *area, *text, *data;
 
@@ -229,7 +231,7 @@ CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
     psize = getpagesize();
     if (dsize < data_end - data_ptr){
       /* Need new text area */
-      size = 2 * align(tsize, psize);
+      size = 2 * ALIGN(tsize, psize);
       area = (char *)mmap(NULL, size,
                           PROT_EXEC | PROT_READ | PROT_WRITE,
                           MAP_ANON | MAP_PRIVATE, -1, 0);
@@ -239,7 +241,7 @@ CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
     }
     else if (tsize < text_end - text_ptr){
       /* Need new data area */
-      size = 2 * align(dsize, psize);
+      size = 2 * ALIGN(dsize, psize);
       area = (char *)mmap(NULL, size,
                           PROT_READ | PROT_WRITE,
                           MAP_ANON | MAP_PRIVATE, -1, 0);
@@ -249,8 +251,8 @@ CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
     }
     else{
       /* Need both new data and new text area */
-      mlsize_t tsize_aligned = 2 * align(tsize, psize);
-      mlsize_t dsize_aligned = 2 * align(dsize, psize);
+      mlsize_t tsize_aligned = 2 * ALIGN(tsize, psize);
+      mlsize_t dsize_aligned = 2 * ALIGN(dsize, psize);
       size = tsize_aligned + dsize_aligned;
       area = (char *)mmap(NULL, size,
                           PROT_EXEC | PROT_READ | PROT_WRITE,
@@ -264,8 +266,8 @@ CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
     }
 
 #ifdef ARCH_SIXTYFOUR
-    if (llabs(text_end - data_ptr) >= 2147483647
-        || llabs(data_end - text_ptr) >= 2147483647){
+    if (ABS(text_end - data_ptr) >= 2147483647
+        || ABS(data_end - text_ptr) >= 2147483647){
       /* Out of 32bit addressing range, try again... */
       munmap(area, size);
       text_ptr = text_end = NULL;
@@ -278,7 +280,8 @@ CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
   Field(res, 0) = (value)caml_copy_nativeint((intnat)text);
   Field(res, 1) = (value)caml_copy_nativeint((intnat)data);
   CAMLreturn(res);
-#undef align
+#undef ALIGN
+#undef ABS
 }
 
 CAMLprim value caml_natdynlink_memcpy(value dst, value src, value size)
