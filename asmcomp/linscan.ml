@@ -279,21 +279,12 @@ let initialize_interval_lists intervals =
     active_cl.fixed <- List.sort (fun i0 i1 -> i1.iend - i0.iend) active_cl.fixed
   done
 
-
- 
-  
-
-let walk_intervals intervals fixed_intervals fd =
+let allocate_registers() =
   (* Initialize the stack slots *)
   for i = 0 to Proc.num_register_classes - 1 do
     Proc.num_stack_slots.(i) <- 0
   done;
-  
-  
-  (* create the active lists *)
-  initialize_interval_lists fixed_intervals;
-  
-
+  (* Create the active lists *)
+  initialize_interval_lists (Interval.all_fixed_intervals());
   (* Walk all the intervals within the list *)
-  List.iter handle_interval intervals
-
+  List.iter handle_interval (Interval.all_intervals())

@@ -15,5 +15,4 @@
 
 (* Linear scan register allocation. *)
 
-val walk_intervals: Interval.interval list -> Interval.interval list -> Mach.fundecl -> unit
-
+val allocate_registers: unit -> unit
