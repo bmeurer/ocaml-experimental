@@ -11,6 +11,9 @@
 (*                                                                     *)
 (***********************************************************************)
 
+(* $Id$ *)
+
+(* Linear scan register allocation. *)
 
 open Interval
 open Clflags
