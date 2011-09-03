@@ -31,8 +31,7 @@ type t =
 
 val all_intervals: unit -> t list
 val all_fixed_intervals: unit -> t list
+val overlap: t -> t -> bool
+val is_live: t -> int -> bool
+val remove_expired_ranges: t -> int -> unit
 val build_intervals: Mach.fundecl -> unit
-val live_on: t -> int -> bool
-val overlapping_ranges: range -> range -> bool
-val overlapping: t -> t -> bool
-val strip_expired_ranges: range list -> int -> range list
