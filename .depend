@@ -496,7 +496,7 @@ asmcomp/emitaux.cmi: asmcomp/debuginfo.cmi
 asmcomp/interf.cmi: asmcomp/mach.cmi
 asmcomp/interval.cmi: asmcomp/reg.cmi asmcomp/mach.cmi
 asmcomp/linearize.cmi: asmcomp/reg.cmi asmcomp/mach.cmi asmcomp/debuginfo.cmi
-asmcomp/linscan.cmi: asmcomp/mach.cmi asmcomp/interval.cmi
+asmcomp/linscan.cmi:
 asmcomp/liveness.cmi: asmcomp/mach.cmi
 asmcomp/mach.cmi: asmcomp/reg.cmi asmcomp/debuginfo.cmi asmcomp/cmm.cmi \
     asmcomp/arch.cmo
@@ -638,10 +638,10 @@ asmcomp/interf.cmo: asmcomp/reg.cmi asmcomp/proc.cmi utils/misc.cmi \
     asmcomp/mach.cmi asmcomp/interf.cmi
 asmcomp/interf.cmx: asmcomp/reg.cmx asmcomp/proc.cmx utils/misc.cmx \
     asmcomp/mach.cmx asmcomp/interf.cmi
-asmcomp/interval.cmo: asmcomp/reg.cmi asmcomp/proc.cmi asmcomp/printmach.cmi \
-    utils/misc.cmi asmcomp/mach.cmi asmcomp/interval.cmi
-asmcomp/interval.cmx: asmcomp/reg.cmx asmcomp/proc.cmx asmcomp/printmach.cmx \
-    utils/misc.cmx asmcomp/mach.cmx asmcomp/interval.cmi
+asmcomp/interval.cmo: asmcomp/reg.cmi asmcomp/proc.cmi utils/misc.cmi \
+    asmcomp/mach.cmi asmcomp/interval.cmi
+asmcomp/interval.cmx: asmcomp/reg.cmx asmcomp/proc.cmx utils/misc.cmx \
+    asmcomp/mach.cmx asmcomp/interval.cmi
 asmcomp/linearize.cmo: asmcomp/reg.cmi asmcomp/proc.cmi utils/misc.cmi \
     asmcomp/mach.cmi asmcomp/debuginfo.cmi asmcomp/cmm.cmi \
     asmcomp/linearize.cmi
@@ -669,11 +669,11 @@ asmcomp/printlinear.cmo: asmcomp/printmach.cmi asmcomp/mach.cmi \
 asmcomp/printlinear.cmx: asmcomp/printmach.cmx asmcomp/mach.cmx \
     asmcomp/linearize.cmx asmcomp/debuginfo.cmx asmcomp/printlinear.cmi
 asmcomp/printmach.cmo: asmcomp/reg.cmi asmcomp/proc.cmi asmcomp/printcmm.cmi \
-    asmcomp/mach.cmi asmcomp/debuginfo.cmi asmcomp/cmm.cmi asmcomp/arch.cmo \
-    asmcomp/printmach.cmi
+    asmcomp/mach.cmi asmcomp/interval.cmi asmcomp/debuginfo.cmi \
+    asmcomp/cmm.cmi asmcomp/arch.cmo asmcomp/printmach.cmi
 asmcomp/printmach.cmx: asmcomp/reg.cmx asmcomp/proc.cmx asmcomp/printcmm.cmx \
-    asmcomp/mach.cmx asmcomp/debuginfo.cmx asmcomp/cmm.cmx asmcomp/arch.cmx \
-    asmcomp/printmach.cmi
+    asmcomp/mach.cmx asmcomp/interval.cmx asmcomp/debuginfo.cmx \
+    asmcomp/cmm.cmx asmcomp/arch.cmx asmcomp/printmach.cmi
 asmcomp/proc.cmo: asmcomp/reg.cmi utils/misc.cmi asmcomp/mach.cmi \
     utils/config.cmi asmcomp/cmm.cmi utils/ccomp.cmi asmcomp/arch.cmo \
     asmcomp/proc.cmi
