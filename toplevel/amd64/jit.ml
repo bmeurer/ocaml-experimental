@@ -96,10 +96,10 @@ let jit_addr_of_symbol sym =
 
 let jit_patch_reloc (sec, ofs, rel) =
   let jit_patch_long str ofs n =
-    String.unsafe_set str ofs (Char.unsafe_chr (n land 0xff));
-    String.unsafe_set str (ofs + 1) (Char.unsafe_chr ((n asr 8) land 0xff));
-    String.unsafe_set str (ofs + 2) (Char.unsafe_chr ((n asr 16) land 0xff));
-    String.unsafe_set str (ofs + 3) (Char.unsafe_chr ((n asr 24) land 0xff))
+    String.unsafe_set str ofs (Char.unsafe_chr n);
+    String.unsafe_set str (ofs + 1) (Char.unsafe_chr (n asr 8));
+    String.unsafe_set str (ofs + 2) (Char.unsafe_chr (n asr 16));
+    String.unsafe_set str (ofs + 3) (Char.unsafe_chr (n asr 24))
   in match rel with
     RelocAbs64 sym ->
       let addr = jit_addr_of_symbol sym in
@@ -150,7 +150,7 @@ let jit_byte n =
     String.unsafe_blit sec.sec_buf 0 content 0 pos;
     sec.sec_buf <- content
   end;
-  String.unsafe_set sec.sec_buf pos (Char.unsafe_chr (n land 0xff));
+  String.unsafe_set sec.sec_buf pos (Char.unsafe_chr n);
   sec.sec_pos <- pos + 1
 
 let jit_word n =
