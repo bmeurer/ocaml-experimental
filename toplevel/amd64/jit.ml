@@ -300,7 +300,6 @@ let jit_rex rex reg_reg reg_index reg_opcode =
 
 let jit_mod_rm_reg rex opcodes rm reg =
   let jit_opcodes opcodes =
-    if opcodes land 0xff0000 != 0 then jit_byte (opcodes asr 16);
     if opcodes land 0x00ff00 != 0 then jit_byte (opcodes asr 8);
     jit_byte opcodes
   and jit_modrm m rm reg =
