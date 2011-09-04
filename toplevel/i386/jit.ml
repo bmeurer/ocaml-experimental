@@ -730,7 +730,7 @@ let emit_reg = function
 let emit_addressing addr r n =
   match addr with
     Ibased(s, d) ->
-      memsymdisp s d
+      memsymdisp (jit_symbol_name s) d
   | Iindexed d ->
       membase d (emit_reg r.(n))
   | Iindexed2 d ->
@@ -1026,7 +1026,7 @@ let emit_instr fallthrough i =
           jit_fldl (memsymbol (jit_label_name lbl))
         end
     | Lop(Iconst_symbol s) ->
-        jit_movl (ImmediateSymbol s) (emit_reg i.res.(0))
+        jit_movl (ImmediateSymbol(jit_symbol_name s)) (emit_reg i.res.(0))
     | Lop(Icall_ind) ->
         jit_calll (emit_reg i.arg.(0));
         record_frame i.live i.dbg
@@ -1045,7 +1045,7 @@ let emit_instr fallthrough i =
         end
     | Lop(Iextcall(s, alloc)) ->
         if alloc then begin
-          jit_movl (ImmediateSymbol s) eax;
+          jit_movl (ImmediateSymbol(jit_symbol_name s)) eax;
           jit_call_symbol "caml_c_call";
           record_frame i.live i.dbg
         end else begin
@@ -1232,7 +1232,7 @@ let emit_instr fallthrough i =
     | Lop(Ispecific(Istore_int(n, addr))) ->
         jit_movl (Immediate n) (emit_addressing addr i.arg 0)
     | Lop(Ispecific(Istore_symbol(s, addr))) ->
-        jit_movl (ImmediateSymbol s) (emit_addressing addr i.arg 0)
+        jit_movl (ImmediateSymbol(jit_symbol_name s)) (emit_addressing addr i.arg 0)
     | Lop(Ispecific(Ioffset_loc(n, addr))) ->
         jit_addl (Immediate (Nativeint.of_int n)) (emit_addressing addr i.arg 0)
     | Lop(Ispecific(Ipush)) ->
@@ -1257,7 +1257,7 @@ let emit_instr fallthrough i =
         jit_pushl (Immediate n);
         stack_offset := !stack_offset + 4
     | Lop(Ispecific(Ipush_symbol s)) ->
-        jit_pushl (ImmediateSymbol s);
+        jit_pushl (ImmediateSymbol(jit_symbol_name s));
         stack_offset := !stack_offset + 4
     | Lop(Ispecific(Ipush_load addr)) ->
         jit_pushl (emit_addressing addr i.arg 0);
