@@ -255,10 +255,12 @@ type argument =
   | Immediate of nativeint
 
 let rax = Register 0
+let rdx = Register 2
 let rsp = Register 4
 let r14 = Register 14
 let r15 = Register 15
 let xmm15 = r15
+let al = rax
 
 let memscale disp ireg scale =
   match ireg with
@@ -1082,13 +1084,13 @@ let emit_instr fallthrough i =
     | Lop(Iintop(Icomp cmp)) ->
         jit_cmpq (emit_reg i.arg.(1)) (emit_reg i.arg.(0));
         let cc = cc_for_cond_branch cmp in
-        jit_setcc cc rax;
-        jit_movzbq rax (emit_reg i.res.(0))
+        jit_setcc cc al;
+        jit_movzbq al (emit_reg i.res.(0))
     | Lop(Iintop_imm(Icomp cmp, n)) ->
         jit_cmpq (Immediate(Nativeint.of_int n)) (emit_reg i.arg.(0));
         let cc = cc_for_cond_branch cmp in
-        jit_setcc cc rax;
-        jit_movzbq rax (emit_reg i.res.(0))
+        jit_setcc cc al;
+        jit_movzbq al (emit_reg i.res.(0))
     | Lop(Iintop Icheckbound) ->
         let lbl = bound_error_label i.dbg in
         jit_cmpq (emit_reg i.arg.(1)) (emit_reg i.arg.(0));
@@ -1209,12 +1211,12 @@ let emit_instr fallthrough i =
            we must be careful not to clobber it before use. *)
         let (tmp1, tmp2) =
           if i.arg.(0).loc = Reg 0 (* rax *)
-          then (phys_reg 4 (*rdx*), phys_reg 0 (*rax*))
-          else (phys_reg 0 (*rax*), phys_reg 4 (*rdx*)) in
-        jit_leaq (Symbol(jit_label_name lbl)) (emit_reg tmp1);
-        jit_movslq (memindex 0 (emit_reg tmp1) (emit_reg i.arg.(0)) 4) (emit_reg tmp2);
-        jit_addq (emit_reg tmp2) (emit_reg tmp1);
-        jit_jmpq (emit_reg tmp1);
+          then (rdx, rax)
+          else (rax, rdx) in
+        jit_leaq (Symbol(jit_label_name lbl)) tmp1;
+        jit_movslq (memindex 0 tmp1 (emit_reg i.arg.(0)) 4) tmp2;
+        jit_addq tmp2 tmp1;
+        jit_jmpq tmp1;
         jit_align 4;
         jit_label lbl;
         for i = 0 to Array.length jumptbl - 1 do
