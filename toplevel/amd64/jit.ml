@@ -23,11 +23,6 @@ open Mach
 open Emitaux
 open Linearize
 
-let macosx =
-  match Config.system with
-  | "macosx" -> true
-  | _ -> false
-
 module Addr = Nativeint
 
 external ndl_malloc: int -> int -> Addr.t * Addr.t = "caml_natdynlink_malloc"
@@ -1271,13 +1266,7 @@ let fundecl fundecl =
   bound_error_call := 0;
   jit_text ();
   jit_align 16;
-  if macosx
-  && not !Clflags.output_c_object
-  && is_generic_function fundecl.fun_name
-  then (* PR#4690 *)
-    jit_symbol fundecl.fun_name
-  else
-    jit_symbol_globl fundecl.fun_name;
+  jit_symbol_globl fundecl.fun_name;
   if frame_required() then begin
     let n = frame_size() - 8 in
     jit_subq (Immediate(Nativeint.of_int n)) rsp
