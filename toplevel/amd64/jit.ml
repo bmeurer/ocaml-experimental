@@ -180,8 +180,8 @@ let jit_align n =
   if m <> n then
     if sec == jit_text_sec then
       match m with
-          2 -> jit_byte 0x8b; jit_byte 0xff
-        | 3 -> jit_byte 0x8d; jit_byte 0x49; jit_byte 0x00
+          2 -> jit_byte 0x66; jit_byte 0x90
+        | 3 -> jit_byte 0x0f; jit_byte 0x1f; jit_byte 0x00
         | m -> for i = 1 to m do jit_byte 0x90 done
     else
       for i = 1 to m do jit_byte 0 done
