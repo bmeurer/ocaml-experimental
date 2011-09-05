@@ -981,9 +981,6 @@ let tailrec_entry_point = ref 0
 let range_check_trap = ref 0
 (* Record float literals to be emitted later *)
 let float_constants = ref ([] : (int * string) list)
-(* Record references to external C functions (for MacOSX) *)
-let external_symbols_direct = ref StringSet.empty
-let external_symbols_indirect = ref StringSet.empty
 
 let emit_instr fallthrough i =
     match i.desc with
