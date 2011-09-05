@@ -700,10 +700,6 @@ let slot_offset loc cl =
 
 let trap_frame_size = Misc.align 8 stack_alignment
 
-let emit_Llabel fallthrough lbl =
-  if not fallthrough && !fastcode_flag then jit_align 16;
-  jit_label lbl
-
 (* Output a pseudo-register *)
 
 (* Map register index to phys index (cf. proc.ml) *)
@@ -1282,7 +1278,8 @@ let emit_instr fallthrough i =
         output_epilogue();
         jit_ret()
     | Llabel lbl ->
-        emit_Llabel fallthrough lbl
+        if not fallthrough && !fastcode_flag then jit_align 16;
+        jit_label lbl
     | Lbranch lbl ->
         jit_jmp_label lbl
     | Lcondbranch(tst, lbl) ->
