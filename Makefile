@@ -300,6 +300,7 @@ install:
 	done
 	cd ocamldoc; $(MAKE) install
 	if test -f ocamlopt; then $(MAKE) installopt; else :; fi
+	if test -f ocamlnat; then $(MAKE) installnat; else :; fi
 	if test -f debugger/ocamldebug; then (cd debugger; $(MAKE) install); \
 	   else :; fi
 	cp config/Makefile $(LIBDIR)/Makefile.config
@@ -320,6 +321,11 @@ installopt:
 	  then cp ocamlopt.opt $(BINDIR)/ocamlopt.opt$(EXE); else :; fi
 	if test -f lex/ocamllex.opt; \
 	  then cp lex/ocamllex.opt $(BINDIR)/ocamllex.opt$(EXE); else :; fi
+
+# Installation of the native toplevel
+
+installnat:
+	cp ocamlnat $(BINDIR)/ocamlnat$(EXE)
 
 clean:: partialclean
 
