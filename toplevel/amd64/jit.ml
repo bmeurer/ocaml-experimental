@@ -907,7 +907,7 @@ let emit_instr fallthrough i =
         output_epilogue();
         jit_ret()
     | Llabel lbl ->
-        if not fallthrough && !fastcode_flag then jit_align 0x90 4;
+        if not fallthrough && !fastcode_flag then jit_align 0x90 16;
         jit_label lbl
     | Lbranch lbl ->
         jit_jmp_label lbl
