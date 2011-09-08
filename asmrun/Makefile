@@ -34,7 +34,7 @@ OBJS=$(COBJS) $(ASMOBJS)
 DOBJS=$(COBJS:.o=.d.o) $(ASMOBJS)
 POBJS=$(COBJS:.o=.p.o) $(ASMOBJS:.o=.p.o)
 
-all: libasmrun.a all-$(PROFILING)
+all: natjit.o libasmrun.a all-$(PROFILING)
 
 libasmrun.a: $(OBJS)
 	rm -f libasmrun.a

@@ -12,10 +12,8 @@
 
 /* $Id$ */
 
-/* Dynamic link and JIT support for the native runtime */
+/* Dynamic link (and JIT) support for the native runtime */
 
-#include <sys/types.h>
-#include <sys/mman.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -200,95 +198,6 @@ CAMLprim value caml_natdynlink_run_jit(value symbol)
 {
   D("caml_natdynlink_run_jit(\"%s\")\n", String_val(symbol));
   return caml_natdynlink_run(caml_rtld_default(), symbol);
-}
-
-CAMLprim value caml_natdynlink_malloc(value text_size, value data_size)
-{
-#define ABS(x) (((x) < 0) ? -(x) : (x))
-#define ALIGN(x, n) ((((x) + ((n) - 1)) / (n)) * (n))
-  CAMLparam2 (text_size, data_size);
-  CAMLlocal1 (res);
-  static char *data_ptr = NULL, *data_end = NULL;
-  static char *text_ptr = NULL, *text_end = NULL;
-  mlsize_t tsize = ALIGN(Long_val(text_size), 16);
-  mlsize_t dsize = ALIGN(Long_val(data_size), 16);
-  mlsize_t psize, size;
-  char *area, *text, *data;
-
-  /* Memory allocation tries to reuse already allocated memory,
-   * which works in many cases. For 64bit architectures we ensure
-   * that all data memory is within 32bit range from the text
-   * memory allocated.
-   */
-  for (;;){
-    /* Check if leftover space is sufficient */
-    if (dsize < data_end - data_ptr && tsize < text_end - text_ptr){
-      text = text_ptr; text_ptr += tsize;
-      data = data_ptr; data_ptr += dsize;
-      break;
-    }
-
-    psize = getpagesize();
-    if (dsize < data_end - data_ptr){
-      /* Need new text area */
-      size = 2 * ALIGN(tsize, psize);
-      area = (char *)mmap(NULL, size,
-                          PROT_EXEC | PROT_READ | PROT_WRITE,
-                          MAP_ANON | MAP_PRIVATE, -1, 0);
-      if (area == (char *)MAP_FAILED) caml_raise_out_of_memory();
-      text_ptr = area;
-      text_end = area + size;
-    }
-    else if (tsize < text_end - text_ptr){
-      /* Need new data area */
-      size = 2 * ALIGN(dsize, psize);
-      area = (char *)mmap(NULL, size,
-                          PROT_READ | PROT_WRITE,
-                          MAP_ANON | MAP_PRIVATE, -1, 0);
-      if (area == (char *)MAP_FAILED) caml_raise_out_of_memory();
-      data_ptr = area;
-      data_end = area + size;
-    }
-    else{
-      /* Need both new data and new text area */
-      mlsize_t tsize_aligned = 2 * ALIGN(tsize, psize);
-      mlsize_t dsize_aligned = 2 * ALIGN(dsize, psize);
-      size = tsize_aligned + dsize_aligned;
-      area = (char *)mmap(NULL, size,
-                          PROT_EXEC | PROT_READ | PROT_WRITE,
-                          MAP_ANON | MAP_PRIVATE, -1, 0);
-      if (area == (char *)MAP_FAILED) caml_raise_out_of_memory();
-      mprotect(area + tsize_aligned, dsize_aligned, PROT_READ | PROT_WRITE);
-      text_ptr = area;
-      text_end = text_ptr + tsize_aligned;
-      data_ptr = text_end;
-      data_end = data_ptr + dsize_aligned;
-    }
-
-#ifdef ARCH_SIXTYFOUR
-    if (ABS(text_end - data_ptr) >= 2147483647
-        || ABS(data_end - text_ptr) >= 2147483647){
-      /* Out of 32bit addressing range, try again... */
-      munmap(area, size);
-      text_ptr = text_end = NULL;
-      data_ptr = data_end = NULL;
-    }
-#endif
-  }
-
-  res = caml_alloc_tuple(2);
-  Field(res, 0) = (value)caml_copy_nativeint((intnat)text);
-  Field(res, 1) = (value)caml_copy_nativeint((intnat)data);
-  CAMLreturn(res);
-#undef ALIGN
-#undef ABS
-}
-
-CAMLprim value caml_natdynlink_memcpy(value dst, value src, value size)
-{
-  D("caml_natdynlink_memcpy(%p, %p, %ld)\n", (void *)Nativeint_val(dst), String_val(src), Long_val(size));
-  memcpy((void *)Nativeint_val(dst), String_val(src), Long_val(size));
-  return Val_unit;
 }
 
 CAMLprim value caml_natdynlink_addsym(value name, value addr)

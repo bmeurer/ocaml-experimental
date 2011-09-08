@@ -367,9 +367,10 @@ partialclean::
 
 # The native toplevel
 
-ocamlnat: ocamlopt otherlibs/dynlink/dynlink.cmxa $(NATTOPOBJS:.cmo=.cmx)
+ocamlnat: ocamlopt otherlibs/dynlink/dynlink.cmxa $(NATTOPOBJS:.cmo=.cmx) \
+  asmrun/natjit.o
 	$(CAMLOPT) $(LINKFLAGS) otherlibs/dynlink/dynlink.cmxa -o ocamlnat \
-	           $(NATTOPOBJS:.cmo=.cmx) -linkall
+	           $(NATTOPOBJS:.cmo=.cmx) asmrun/natjit.o -linkall
 
 toplevel/opttoploop.cmx: otherlibs/dynlink/dynlink.cmxa
 
