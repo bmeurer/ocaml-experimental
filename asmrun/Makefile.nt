@@ -40,7 +40,7 @@ endif
 
 OBJS=$(COBJS) $(ASMOBJS)
 
-all: libasmrun.$(A)
+all: natjit.$(O) libasmrun.$(A)
 
 libasmrun.$(A): $(OBJS)
 	$(call MKLIB,libasmrun.$(A), $(OBJS))
