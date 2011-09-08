@@ -24,218 +24,9 @@ open Arch
 open Proc
 open Reg
 open Mach
-open Linearize
+open Jitaux
 open Emitaux
-
-module Addr = Nativeint
-
-external nj_malloc: int -> int -> Addr.t * Addr.t = "caml_natjit_malloc"
-external nj_memcpy: Addr.t -> string -> int -> unit = "caml_natjit_memcpy" "noalloc"
-external ndl_addsym: string -> Addr.t -> unit = "caml_natdynlink_addsym" "noalloc"
-external ndl_getsym: string -> Addr.t = "caml_natdynlink_getsym"
-
-type reloc =
-    RelocAbs32 of (*sym*)string
-  | RelocRel32 of (*sym*)string
-
-type section =
-  { mutable sec_buf: string;
-    mutable sec_pos: int;
-    mutable sec_addr: Addr.t }
-
-let new_sec () =
-  { sec_buf = String.create 1024;
-    sec_pos = 0;
-    sec_addr = 0n }
-
-let reset_sec sec =
-  sec.sec_buf <- String.create 1024;
-  sec.sec_pos <- 0
-
-let jit_text_sec = new_sec ()
-let jit_data_sec = new_sec ()
-let jit_curr_sec = ref jit_text_sec
-
-let jit_globals = ref ([] : string list)
-let jit_relocs = ref ([] : (section * int * reloc) list)
-let jit_symbols = ref ([] : (string * (section * int)) list)
-
-let jit_text () =
-  jit_curr_sec := jit_text_sec
-
-let jit_data () =
-  jit_curr_sec := jit_data_sec
-
-let jit_reset () =
-  reset_sec jit_text_sec;
-  reset_sec jit_data_sec;
-  jit_globals := [];
-  jit_relocs := [];
-  jit_symbols := [];
-  jit_text ()
-
-let jit_addr_of_symbol sym =
-  try
-    (* Check our own symbols first *)
-    let (sec, ofs) = List.assoc sym !jit_symbols in
-    Addr.add sec.sec_addr (Addr.of_int ofs)
-  with
-    Not_found ->
-      (* Fallback to the global symbol table *)
-      ndl_getsym sym
-
-let jit_patch_reloc (sec, ofs, rel) =
-  let get_long str ofs =
-    Nativeint.logor 
-      (Nativeint.logor
-        (Nativeint.of_int (Char.code (String.unsafe_get str ofs)))
-        (Nativeint.shift_left
-          (Nativeint.of_int (Char.code (String.unsafe_get str (ofs + 1))))
-          8))
-      (Nativeint.logor 
-        (Nativeint.shift_left
-          (Nativeint.of_int (Char.code (String.unsafe_get str (ofs + 2))))
-          16)
-        (Nativeint.shift_left
-          (Nativeint.of_int (Char.code (String.unsafe_get str (ofs + 3))))
-          24)) in
-  let put_long str ofs n =
-    String.unsafe_set str ofs
-      (Char.unsafe_chr (Nativeint.to_int n));
-    String.unsafe_set str (ofs + 1)
-      (Char.unsafe_chr (Nativeint.to_int (Nativeint.shift_right n 8)));
-    String.unsafe_set str (ofs + 2)
-      (Char.unsafe_chr (Nativeint.to_int (Nativeint.shift_right n 16)));
-    String.unsafe_set str (ofs + 3)
-      (Char.unsafe_chr (Nativeint.to_int (Nativeint.shift_right n 24))) in
-  begin match rel with
-    RelocAbs32 sym ->
-      let addr = jit_addr_of_symbol sym in
-      let disp = get_long sec.sec_buf ofs in
-      put_long sec.sec_buf ofs (Addr.add addr disp)
-  | RelocRel32 sym ->
-      let saddr = jit_addr_of_symbol sym in
-      let disp = get_long sec.sec_buf ofs in
-      let raddr = Addr.add sec.sec_addr (Addr.of_int ofs) in
-      put_long sec.sec_buf ofs (Addr.add (Addr.sub saddr raddr) disp)
-  end
-
-let jit_memcpy_sec sec =
-  nj_memcpy sec.sec_addr sec.sec_buf sec.sec_pos
-
-let jit_finalize () =
-  let text_size = jit_text_sec.sec_pos in
-  let data_size = jit_data_sec.sec_pos in
-  let (text, data) = nj_malloc text_size data_size in
-  jit_text_sec.sec_addr <- text;
-  jit_data_sec.sec_addr <- data;
-  (* Patch all relocations *)
-  List.iter jit_patch_reloc !jit_relocs;
-  (* Copy section content *)
-  jit_memcpy_sec jit_text_sec;
-  jit_memcpy_sec jit_data_sec;
-  (* Register the global symbols *)
-  List.iter (fun sym ->
-               let (sec, ofs) = List.assoc sym !jit_symbols in
-               let addr = Addr.add sec.sec_addr (Addr.of_int ofs) in
-               ndl_addsym sym addr)
-            !jit_globals
-
-let jit_byte n =
-  let sec = !jit_curr_sec in
-  let len = String.length sec.sec_buf in
-  let pos = sec.sec_pos in
-  if pos = len then begin
-    let content = String.create (len * 2) in
-    String.unsafe_blit sec.sec_buf 0 content 0 pos;
-    sec.sec_buf <- content
-  end;
-  String.unsafe_set sec.sec_buf pos (Char.unsafe_chr (n land 0xff));
-  sec.sec_pos <- pos + 1
-
-let jit_word n =
-  jit_byte n;
-  jit_byte (n asr 8)
-
-let jit_long n =
-  jit_byte n;
-  jit_byte (n asr 8);
-  jit_byte (n asr 16);
-  jit_byte (n asr 24)
-
-let jit_longn n =
-  jit_byte (Nativeint.to_int n);
-  jit_byte (Nativeint.to_int (Nativeint.shift_right n 8));
-  jit_byte (Nativeint.to_int (Nativeint.shift_right n 16));
-  jit_byte (Nativeint.to_int (Nativeint.shift_right n 24))
-
-let jit_quad n =
-  jit_longn (Int64.to_nativeint n);
-  jit_longn (Int64.to_nativeint (Int64.shift_right n 32))
-
-let jit_ascii s =
-  String.iter (fun c -> jit_byte (Char.code c)) s
-
-let jit_asciz s =
-  jit_ascii s;
-  jit_byte 0
-
-let jit_align n =
-  let sec = !jit_curr_sec in
-  let m = n - (sec.sec_pos mod n) in
-  if m <> n then
-    if sec == jit_text_sec then
-      for i = 1 to m do jit_byte 0x90 done
-    else
-      for i = 1 to m do jit_byte 0 done
-
-let rec jit_skip = function
-    0 -> ()
-  | n -> jit_byte 0; jit_skip (n - 1)
-
-let jit_symbol_define sym =
-  let sec = !jit_curr_sec in
-  jit_symbols := (sym, (sec, sec.sec_pos)) :: !jit_symbols
-
-let jit_symbol_name sym =
-  let buf = Buffer.create (1 + String.length sym) in
-  String.iter
-    (function
-        ('A'..'Z' | 'a'..'z' | '0'..'9' | '_') as c -> Buffer.add_char buf c
-      | c -> Printf.bprintf buf "$%02x" (Char.code c)) sym;
-  Buffer.contents buf
-
-let jit_symbol sym =
-  jit_symbol_define (jit_symbol_name sym)
-
-let jit_symbol_globl sym =
-  let sym = jit_symbol_name sym in
-  jit_symbol_define sym;
-  jit_globals := sym :: !jit_globals
-  
-let jit_globl sym =
-  jit_globals := (jit_symbol_name sym) :: !jit_globals
-
-let jit_label_name lbl =
-  ".L" ^ (string_of_int lbl)
-
-let jit_label lbl =
-  jit_symbol_define (jit_label_name lbl)
-
-(* Relocations *)
-
-let jit_reloc reloc =
-  let sec = !jit_curr_sec in
-  jit_relocs := (sec, sec.sec_pos, reloc) :: !jit_relocs
-
-let jit_reloc_abs32 sym =
-  jit_reloc (RelocAbs32 sym);
-  jit_long 0
-
-let jit_reloc_rel32 sym =
-  (* The "usual" 32bit relocation with -4 byte displacement *)
-  jit_reloc (RelocRel32 sym);
-  jit_long (-4)
+open Linearize
 
 (* Instructions *)
 
@@ -243,10 +34,10 @@ type argument =
     Register of int
   | Memory of (*ireg*)int * (*scale*)int * (*breg*)int * (*disp*)int
               (* A value of -1 for breg means no base register *)
-  | MemorySymbol of (*ireg*)int * (*scale*)int * (*disp*)int * (*sym*)string
-              (* A value of -1 for ireg means absolute addressing *)
+  | MemoryTag of (*ireg*)int * (*scale*)int * (*disp*)int * (*tag*)tag
+                 (* A value of -1 for ireg means absolute addressing *)
   | Immediate of nativeint
-  | ImmediateSymbol of string
+  | ImmediateTag of tag
 
 let eax = Register 0
 let ecx = Register 1
@@ -272,28 +63,32 @@ let memindex disp breg ireg scale =
   | _ ->
       assert false
 
-let memsymdisp sym disp =
-  MemorySymbol(-1, 0, disp, sym)
+let memtag tag disp =
+  MemoryTag(-1, 0, disp, tag)
 
 let memsymbol sym =
-  memsymdisp sym 0
+  memtag (jit_symbol_tag sym) 0
 
-let memsymscale sym ireg scale =
+let memlblscale lbl ireg scale =
   match ireg with
     Register ireg ->
-      MemorySymbol(ireg, scale, 0, sym)
+      MemoryTag(ireg, scale, 0, jit_label_tag lbl)
   | _ ->
       assert false
+
+let caml_young_ptr = memsymbol "caml_young_ptr"
+let caml_young_limit = memsymbol "caml_young_limit"
+let caml_exception_pointer = memsymbol "caml_exception_pointer"
 
 let is_imm8 n = n >= -128 && n <= 127
 let is_imm8n n = n >= -128n && n <= 127n
 
 let jit_mod_rm_reg opcodes rm reg =
   let jit_opcodes opcodes =
-    if opcodes land 0x00ff00 != 0 then jit_byte (opcodes asr 8);
-    jit_byte opcodes
+    if opcodes land 0x00ff00 != 0 then jit_int8 (opcodes asr 8);
+    jit_int8 opcodes
   and jit_modrm m rm reg =
-    jit_byte ((m lsl 6) lor rm lor (reg lsl 3))
+    jit_int8 ((m lsl 6) lor rm lor (reg lsl 3))
   and jit_sib s i b =
     let s = (match s with
                 1 -> 0
@@ -301,7 +96,7 @@ let jit_mod_rm_reg opcodes rm reg =
               | 4 -> 2
               | 8 -> 3
               | _ -> assert false) in
-    jit_byte ((s lsl 6) lor (i lsl 3) lor b)
+    jit_int8 ((s lsl 6) lor (i lsl 3) lor b)
   in match rm with
   | Register rm ->
       jit_opcodes opcodes;
@@ -314,50 +109,37 @@ let jit_mod_rm_reg opcodes rm reg =
       jit_opcodes opcodes;
       jit_modrm 0b01 0b100 reg;
       jit_sib 1 0b100 breg;
-      jit_byte disp
+      jit_int8 disp
   | Memory(((*%esp*)4) as breg, 1, -1, disp) ->
       jit_opcodes opcodes;
       jit_modrm 0b10 0b100 reg;
       jit_sib 1 0b100 breg;
-      jit_long disp
+      jit_int32 disp
   | Memory(((*%ebp*)5) as breg, 1, -1, disp) when is_imm8 disp ->
       jit_opcodes opcodes;
       jit_modrm 0b01 breg reg;
-      jit_byte disp
+      jit_int8 disp
   | Memory(rm, 1, -1, 0) ->
       jit_opcodes opcodes;
       jit_modrm 0b00 rm reg
   | Memory(rm, 1, -1, disp) when is_imm8 disp ->
       jit_opcodes opcodes;
       jit_modrm 0b01 rm reg;
-      jit_byte disp
+      jit_int8 disp
   | Memory(rm, 1, -1, disp) ->
       jit_opcodes opcodes;
       jit_modrm 0b10 rm reg;
-      jit_long disp
-  | MemorySymbol(-1, _, disp, sym) ->
-      (* absolute addressing *)
-      jit_opcodes opcodes;
-      jit_modrm 0b00 0b101 reg;
-      jit_reloc (RelocAbs32 sym);
-      jit_long disp
-  | MemorySymbol(ireg, scale, disp, sym) ->
-      (* absolute addressing plus scaled index *)
-      jit_opcodes opcodes;
-      jit_modrm 0b00 0b100 reg;
-      jit_sib scale ireg 0b101;
-      jit_reloc (RelocAbs32 sym);
-      jit_long disp
+      jit_int32 disp
   | Memory(ireg, scale, (*no breg*)-1, disp) ->
       jit_opcodes opcodes;
       jit_modrm 0b00 0b100 reg;
       jit_sib scale ireg 0b101;
-      jit_long disp
+      jit_int32 disp
   | Memory(ireg, scale, (((*%ebp*)5) as breg), 0) ->
       jit_opcodes opcodes;
       jit_modrm 0b01 0b100 reg;
       jit_sib scale ireg breg;
-      jit_byte 0
+      jit_int8 0
   | Memory(ireg, scale, breg, 0) ->
       jit_opcodes opcodes;
       jit_modrm 0b00 0b100 reg;
@@ -366,12 +148,25 @@ let jit_mod_rm_reg opcodes rm reg =
       jit_opcodes opcodes;
       jit_modrm 0b01 0b100 reg;
       jit_sib scale ireg breg;
-      jit_byte disp
+      jit_int8 disp
   | Memory(ireg, scale, breg, disp) ->
       jit_opcodes opcodes;
       jit_modrm 0b10 0b100 reg;
       jit_sib scale ireg breg;
-      jit_long disp
+      jit_int32 disp
+  | MemoryTag(-1, _, disp, tag) ->
+      (* absolute addressing *)
+      jit_opcodes opcodes;
+      jit_modrm 0b00 0b101 reg;
+      jit_reloc (RelocAbs tag);
+      jit_int32 disp
+  | MemoryTag(ireg, scale, disp, tag) ->
+      (* absolute addressing plus scaled index *)
+      jit_opcodes opcodes;
+      jit_modrm 0b00 0b100 reg;
+      jit_sib scale ireg 0b101;
+      jit_reloc (RelocAbs tag);
+      jit_int32 disp
   | _ ->
       assert false
 
@@ -379,7 +174,7 @@ let jit_testl src dst =
   match src, dst with
     Immediate n, rm ->
       jit_mod_rm_reg 0xf7 rm 0;
-      jit_longn n
+      jit_int32n n
   | Register reg, rm ->
       jit_mod_rm_reg 0x85 rm reg
   | _ ->
@@ -388,15 +183,15 @@ let jit_testl src dst =
 let jit_movb src dst =
   match src, dst with
     Immediate n, Register reg ->
-      jit_byte (0xb0 + reg);
-      jit_byte (Nativeint.to_int n)
+      jit_int8 (0xb0 + reg);
+      jit_int8n n
   | Register reg, rm ->
       jit_mod_rm_reg 0x88 rm reg
   | _ ->
       assert false
 
 let jit_movw src dst =
-  jit_byte 0x66;
+  jit_int8 0x66;
   match src, dst with
     rm, Register reg ->
       jit_mod_rm_reg 0x8b rm reg
@@ -409,11 +204,11 @@ let jit_movl src dst =
   match src, dst with
     Immediate n, rm ->
       jit_mod_rm_reg 0xc7 rm 0;
-      jit_longn n
-  | ImmediateSymbol sym, rm ->
+      jit_int32n n
+  | ImmediateTag tag, rm ->
       jit_mod_rm_reg 0xc7 rm 0;
-      jit_reloc (RelocAbs32 sym);
-      jit_long 0
+      jit_reloc (RelocAbs tag);
+      jit_int32l 0l
   | rm, Register reg ->
       jit_mod_rm_reg 0x8b rm reg
   | Register reg, rm ->
@@ -421,46 +216,24 @@ let jit_movl src dst =
   | _ ->
       assert false
 
-let jit_movsbl src dst =
+let jit_rmreg opcode src dst =
   match src, dst with
     rm, Register reg ->
-      jit_mod_rm_reg 0x0fbe rm reg
+      jit_mod_rm_reg opcode rm reg
   | _ ->
       assert false
 
-let jit_movswl src dst =
-  match src, dst with
-    rm, Register reg ->
-      jit_mod_rm_reg 0x0fbf rm reg
-  | _ ->
-      assert false
-
-let jit_movzbl src dst =
-  match src, dst with
-    rm, Register reg ->
-      jit_mod_rm_reg 0x0fb6 rm reg
-  | _ ->
-      assert false
-
-let jit_movzwl src dst =
-  match src, dst with
-    rm, Register reg ->
-      jit_mod_rm_reg 0x0fb7 rm reg
-  | _ ->
-      assert false
-
-let jit_leal src dst =
-  match src, dst with
-    rm, Register reg ->
-      jit_mod_rm_reg 0x8d rm reg
-  | _ ->
-      assert false
+let jit_movsbl src dst = jit_rmreg 0x0fbe src dst
+let jit_movswl src dst = jit_rmreg 0x0fbf src dst
+let jit_movzbl src dst = jit_rmreg 0x0fb6 src dst
+let jit_movzwl src dst = jit_rmreg 0x0fb7 src dst
+let jit_leal   src dst = jit_rmreg 0x008d src dst
 
 let jit_alub op src dst =
   match src, dst with
     Immediate n, rm ->
       jit_mod_rm_reg 0x80 rm op;
-      jit_byte (Nativeint.to_int n)
+      jit_int8n n
   | _ ->
       assert false
 
@@ -473,10 +246,10 @@ let jit_alul op src dst =
   match src, dst with
     Immediate n, rm when is_imm8n n ->
       jit_mod_rm_reg 0x83 rm op;
-      jit_byte (Nativeint.to_int n)
+      jit_int8n n
   | Immediate n, rm ->
       jit_mod_rm_reg 0x81 rm op;
-      jit_longn n
+      jit_int32n n
   | rm, Register reg ->
       jit_mod_rm_reg ((op lsl 3) + 3) rm reg
   | Register reg, rm ->
@@ -495,10 +268,10 @@ let jit_imull src dst =
   match src, dst with
     Immediate n, (Register reg as rm) when is_imm8n n ->
       jit_mod_rm_reg 0x6b rm reg;
-      jit_byte (Nativeint.to_int n)
+      jit_int8n n
   | Immediate n, (Register reg as rm) ->
       jit_mod_rm_reg 0x69 rm reg;
-      jit_longn n
+      jit_int32n n
   | rm, Register reg ->
       jit_mod_rm_reg 0x0faf rm reg
   | _ ->
@@ -513,7 +286,7 @@ let jit_shfl op src dst =
       jit_mod_rm_reg 0xd1 rm op
   | Immediate n, rm ->
       jit_mod_rm_reg 0xc1 rm op;
-      jit_byte (Nativeint.to_int n)
+      jit_int8n n
   | (*%cl*)Register 1, rm ->
       jit_mod_rm_reg 0xd3 rm op
   | _ ->
@@ -526,52 +299,58 @@ let jit_sarl src dst = jit_shfl 7 src dst
 let jit_jmpl dst =
   jit_mod_rm_reg 0xff dst 4
 
+let jit_jmp_tag tag =
+  jit_int8 0xe9;
+  jit_reloc (RelocRel tag);
+  jit_int32l (-4l)
+
 let jit_jmp_label lbl =
-  jit_byte 0xe9;
-  jit_reloc_rel32 (jit_label_name lbl)
+  jit_jmp_tag (jit_label_tag lbl)
 
 let jit_jmp_symbol sym =
-  jit_byte 0xe9;
-  jit_reloc_rel32 (jit_symbol_name sym)
+  jit_jmp_tag (jit_symbol_tag sym)
 
 let jit_calll dst =
   jit_mod_rm_reg 0xff dst 2
 
+let jit_call_tag tag =
+  jit_int8 0xe8;
+  jit_reloc (RelocRel tag);
+  jit_int32l (-4l)
+
 let jit_call_label lbl =
-  jit_byte 0xe8;
-  jit_reloc_rel32 (jit_label_name lbl)
+  jit_call_tag (jit_label_tag lbl)
 
 let jit_call_symbol sym =
-  jit_byte 0xe8;
-  jit_reloc_rel32 (jit_symbol_name sym)
+  jit_call_tag (jit_symbol_tag sym)
 
 let jit_ret() =
-  jit_byte 0xc3
+  jit_int8 0xc3
 
 let jit_pushl = function
     Immediate n when is_imm8n n ->
-      jit_byte 0x6a;
-      jit_byte (Nativeint.to_int n)
+      jit_int8 0x6a;
+      jit_int8n n
   | Immediate n ->
-      jit_byte 0x68;
-      jit_longn n
-  | ImmediateSymbol sym ->
-      jit_byte 0x68;
-      jit_reloc (RelocAbs32 sym);
-      jit_long 0
+      jit_int8 0x68;
+      jit_int32n n
+  | ImmediateTag tag ->
+      jit_int8 0x68;
+      jit_reloc (RelocAbs tag);
+      jit_int32l 0l
   | Register reg ->
-      jit_byte (0x50 + reg)
+      jit_int8 (0x50 + reg)
   | rm ->
       jit_mod_rm_reg 0xff rm 6
 
 let jit_popl = function
     Register reg ->
-      jit_byte (0x58 + reg)
+      jit_int8 (0x58 + reg)
   | rm ->
       jit_mod_rm_reg 0x8f rm 0
 
 let jit_cltd() =
-  jit_byte 0x99
+  jit_int8 0x99
 
 (* Condition codes *)
 type cc =
@@ -583,8 +362,10 @@ type cc =
 external int_of_cc: cc -> int = "%identity"
 
 let jit_jcc_label cc lbl =
-  jit_byte 0x0f; jit_byte (0x80 + (int_of_cc cc));
-  jit_reloc_rel32 (jit_label_name lbl)
+  jit_int8 0x0f;
+  jit_int8 (0x80 + (int_of_cc cc));
+  jit_reloc (RelocRel(jit_label_tag lbl));
+  jit_int32l (-4l)
 
 let jit_jb_label   lbl = jit_jcc_label B   lbl
 let jit_jnb_label  lbl = jit_jcc_label NB  lbl
@@ -613,8 +394,8 @@ let jit_fdivs  src = jit_mod_rm_reg 0xd8 src 6
 let jit_fdivrs src = jit_mod_rm_reg 0xd8 src 7
 
 let jit_fpu_d9 op =
-  jit_byte 0xd9;
-  jit_byte op
+  jit_int8 0xd9;
+  jit_int8 op
 
 let jit_fxch()   = jit_fpu_d9 0xc9
 let jit_fchs()   = jit_fpu_d9 0xe0
@@ -647,12 +428,12 @@ let jit_fldl   src = jit_mod_rm_reg 0xdd src 0
 let jit_fstpl  dst = jit_mod_rm_reg 0xdd dst 3
 
 let jit_fstp() =
-  jit_byte 0xdd;
-  jit_byte 0xd8
+  jit_int8 0xdd;
+  jit_int8 0xd8
 
 let jit_fpu_de op =
-  jit_byte 0xde;
-  jit_byte op
+  jit_int8 0xde;
+  jit_int8 op
 
 let jit_faddp()  = jit_fpu_de 0xc1
 let jit_fmulp()  = jit_fpu_de 0xc9
@@ -664,13 +445,10 @@ let jit_fdivp()  = jit_fpu_de 0xf9
 
 let jit_fnstsw = function
     (*%ax*)Register 0 ->
-      jit_byte 0xdf;
-      jit_byte 0xe0
+      jit_int8 0xdf;
+      jit_int8 0xe0
   | _ ->
       assert false
-
-(* ==== TODO ==== *)
-
 
 (* Tradeoff between code size and code speed *)
 
@@ -680,7 +458,7 @@ let stack_offset = ref 0
 
 (* Layout of the stack frame *)
 
-let frame_size () =                     (* includes return address *)
+let frame_size() =                     (* includes return address *)
   let sz =
     !stack_offset + 4 * num_stack_slots.(0) + 8 * num_stack_slots.(1) + 4
   in Misc.align sz stack_alignment
@@ -710,11 +488,13 @@ let int_reg_index =
 let register_index r =
   int_reg_index.(r)
 
+let caml_extra_params = jit_symbol_tag "caml_extra_params"
+
 let emit_reg = function
     { loc = Reg r } ->
       Register(register_index r)
   | { loc = Stack(Incoming n | Outgoing n) } when n < 0 ->
-      memsymdisp "caml_extra_params" (n + 64)
+      memtag caml_extra_params (n + 64)
   | { loc = Stack s } as r ->
       let ofs = slot_offset s (register_class r) in
       membase ofs esp
@@ -726,7 +506,7 @@ let emit_reg = function
 let emit_addressing addr r n =
   match addr with
     Ibased(s, d) ->
-      memsymdisp (jit_symbol_name s) d
+      memtag (jit_symbol_tag s) d
   | Iindexed d ->
       membase d (emit_reg r.(n))
   | Iindexed2 d ->
@@ -804,7 +584,7 @@ let emit_call_bound_error bd =
   jit_call_symbol "caml_ml_array_bound_error";
   jit_label bd.bd_frame
 
-let emit_call_bound_errors () =
+let emit_call_bound_errors() =
   List.iter emit_call_bound_error !bound_error_sites;
   if !bound_error_call > 0 then begin
     jit_label !bound_error_call;
@@ -877,7 +657,7 @@ let output_test_zero arg =
 
 (* Deallocate the stack frame before a return or tail call *)
 
-let output_epilogue () =
+let output_epilogue() =
   let n = frame_size() - 4 in
   if n > 0 then jit_addl (Immediate (Nativeint.of_int n)) esp
 
@@ -1016,10 +796,10 @@ let emit_instr fallthrough i =
         | _ ->
           let lbl = new_label() in
           float_constants := (lbl, s) :: !float_constants;
-          jit_fldl (memsymbol (jit_label_name lbl))
+          jit_fldl (memtag (jit_label_tag lbl) 0)
         end
     | Lop(Iconst_symbol s) ->
-        jit_movl (ImmediateSymbol(jit_symbol_name s)) (emit_reg i.res.(0))
+        jit_movl (ImmediateTag(jit_symbol_tag s)) (emit_reg i.res.(0))
     | Lop(Icall_ind) ->
         jit_calll (emit_reg i.arg.(0));
         record_frame i.live i.dbg
@@ -1038,7 +818,7 @@ let emit_instr fallthrough i =
         end
     | Lop(Iextcall(s, alloc)) ->
         if alloc then begin
-          jit_movl (ImmediateSymbol(jit_symbol_name s)) eax;
+          jit_movl (ImmediateTag(jit_symbol_tag s)) eax;
           jit_call_symbol "caml_c_call";
           record_frame i.live i.dbg
         end else begin
@@ -1094,10 +874,10 @@ let emit_instr fallthrough i =
         if !fastcode_flag then begin
           let lbl_redo = new_label() in
           jit_label lbl_redo;
-          jit_movl (memsymbol "caml_young_ptr") eax;
+          jit_movl caml_young_ptr eax;
           jit_subl (Immediate (Nativeint.of_int n)) eax;
-          jit_movl eax (memsymbol "caml_young_ptr");
-          jit_cmpl (memsymbol "caml_young_limit") eax;
+          jit_movl eax caml_young_ptr;
+          jit_cmpl caml_young_limit eax;
           let lbl_call_gc = new_label() in
           let lbl_frame = record_frame_label i.live Debuginfo.none in
           jit_jb_label lbl_call_gc;
@@ -1225,7 +1005,7 @@ let emit_instr fallthrough i =
     | Lop(Ispecific(Istore_int(n, addr))) ->
         jit_movl (Immediate n) (emit_addressing addr i.arg 0)
     | Lop(Ispecific(Istore_symbol(s, addr))) ->
-        jit_movl (ImmediateSymbol(jit_symbol_name s)) (emit_addressing addr i.arg 0)
+        jit_movl (ImmediateTag(jit_symbol_tag s)) (emit_addressing addr i.arg 0)
     | Lop(Ispecific(Ioffset_loc(n, addr))) ->
         jit_addl (Immediate (Nativeint.of_int n)) (emit_addressing addr i.arg 0)
     | Lop(Ispecific(Ipush)) ->
@@ -1250,7 +1030,7 @@ let emit_instr fallthrough i =
         jit_pushl (Immediate n);
         stack_offset := !stack_offset + 4
     | Lop(Ispecific(Ipush_symbol s)) ->
-        jit_pushl (ImmediateSymbol(jit_symbol_name s));
+        jit_pushl (ImmediateTag(jit_symbol_tag s));
         stack_offset := !stack_offset + 4
     | Lop(Ispecific(Ipush_load addr)) ->
         jit_pushl (emit_addressing addr i.arg 0);
@@ -1278,7 +1058,7 @@ let emit_instr fallthrough i =
         output_epilogue();
         jit_ret()
     | Llabel lbl ->
-        if not fallthrough && !fastcode_flag then jit_align 16;
+        if not fallthrough && !fastcode_flag then jit_align 0x90 16;
         jit_label lbl
     | Lbranch lbl ->
         jit_jmp_label lbl
@@ -1328,34 +1108,33 @@ let emit_instr fallthrough i =
             end
     | Lswitch jumptbl ->
         let lbl = new_label() in
-        jit_jmpl (memsymscale (jit_label_name lbl) (emit_reg i.arg.(0)) 4);
+        jit_jmpl (memlblscale lbl (emit_reg i.arg.(0)) 4);
+        jit_data();
+        jit_align 0 4;
         jit_label lbl;
         for i = 0 to Array.length jumptbl - 1 do
-          jit_reloc_abs32 (jit_label_name jumptbl.(i))
-        done
+          jit_reloc (RelocAbs(jit_label_tag jumptbl.(i)));
+          jit_int32l 0l
+        done;
+        jit_text()
     | Lsetuptrap lbl ->
         jit_call_label lbl
     | Lpushtrap ->
         if trap_frame_size > 8 then
           jit_subl (Immediate (Nativeint.of_int (trap_frame_size - 8))) esp;
-        jit_pushl (memsymbol "caml_exception_pointer");
-        jit_movl esp (memsymbol "caml_exception_pointer");
+        jit_pushl caml_exception_pointer;
+        jit_movl esp caml_exception_pointer;
         stack_offset := !stack_offset + trap_frame_size
     | Lpoptrap ->
-        jit_popl (memsymbol "caml_exception_pointer");
+        jit_popl caml_exception_pointer;
         jit_addl (Immediate (Nativeint.of_int (trap_frame_size - 4))) esp;
         stack_offset := !stack_offset - trap_frame_size
     | Lraise ->
-        if !Clflags.debug then begin
-          jit_call_symbol "caml_raise_exn";
-          record_frame Reg.Set.empty i.dbg
-        end else begin
-          jit_movl (memsymbol "caml_exception_pointer") esp;
-          jit_popl (memsymbol "caml_exception_pointer");
-          if trap_frame_size > 8 then
-            jit_addl (Immediate (Nativeint.of_int (trap_frame_size - 8))) esp;
-          jit_ret()
-        end
+        jit_movl caml_exception_pointer esp;
+        jit_popl caml_exception_pointer;
+        if trap_frame_size > 8 then
+          jit_addl (Immediate (Nativeint.of_int (trap_frame_size - 8))) esp;
+        jit_ret()
 
 let rec emit_all fallthrough i =
   match i.desc with
@@ -1370,7 +1149,7 @@ let rec emit_all fallthrough i =
 
 let emit_float_constant (lbl, cst) =
   jit_label lbl;
-  jit_quad (Int64.bits_of_float (float_of_string cst))
+  jit_int64L (Int64.bits_of_float (float_of_string cst))
 
 (* Emission of a function declaration *)
 
@@ -1379,85 +1158,35 @@ let fundecl fundecl =
   fastcode_flag := fundecl.fun_fast;
   tailrec_entry_point := new_label();
   stack_offset := 0;
-  float_constants := [];
   call_gc_sites := [];
   bound_error_sites := [];
   bound_error_call := 0;
   jit_text();
-  jit_align 16;
-  jit_symbol_globl fundecl.fun_name;
+  jit_align 0 16;
+  jit_global fundecl.fun_name;
+  jit_symbol fundecl.fun_name;
   let n = frame_size() - 4 in
   if n > 0 then
     jit_subl (Immediate (Nativeint.of_int n)) esp;
   jit_label !tailrec_entry_point;
   emit_all true fundecl.fun_body;
   List.iter emit_call_gc !call_gc_sites;
-  emit_call_bound_errors ();
-  List.iter emit_float_constant !float_constants
+  emit_call_bound_errors()
 
 
 (* Emission of data *)
 
-let emit_item = function
-    Cglobal_symbol s ->
-      jit_globl s
-  | Cdefine_symbol s ->
-      jit_symbol s
-  | Cdefine_label lbl ->
-      jit_label (100000 + lbl)
-  | Cint8 n ->
-      jit_byte n
-  | Cint16 n ->
-      jit_word n
-  | Cint32 n ->
-      jit_longn n
-  | Cint n ->
-      jit_longn n
-  | Csingle f ->
-      jit_longn (Nativeint.of_int32 (Int32.bits_of_float (float_of_string f)))
-  | Cdouble f ->
-      jit_quad (Int64.bits_of_float (float_of_string f))
-  | Csymbol_address s ->
-      jit_reloc_abs32 (jit_symbol_name s)
-  | Clabel_address lbl ->
-      jit_reloc_abs32 (jit_label_name (100000 + lbl))
-  | Cstring s ->
-      jit_ascii s
-  | Cskip n ->
-      jit_skip n
-  | Calign n ->
-      jit_align n
-
-let data l =
-  jit_data();
-  List.iter emit_item l
+let data = Jitaux.data
 
 (* Beginning / end of an assembly file *)
 
 let begin_assembly() =
-  jit_reset();
-  jit_data();
-  jit_symbol_globl (Compilenv.make_symbol (Some "data_begin"));
-  jit_text();
-  jit_symbol_globl (Compilenv.make_symbol (Some "code_begin"))
+  float_constants := [];
+  Jitaux.begin_assembly()
 
 let end_assembly() =
-  jit_data ();
-  jit_symbol_globl (Compilenv.make_symbol (Some "data_end"));
-  jit_text ();
-  jit_symbol_globl (Compilenv.make_symbol (Some "code_end"));
-  jit_long 0;
-  jit_symbol_globl (Compilenv.make_symbol (Some "frametable"));
-  emit_frames
-    { efa_label = (fun lbl -> jit_reloc_abs32 (jit_label_name lbl));
-      efa_16 = jit_word;
-      efa_32 = (fun n -> jit_longn (Nativeint.of_int32 n));
-      efa_word = jit_long;
-      efa_align = jit_align;
-      efa_label_rel = (fun lbl ofs ->
-                         (* .long lbl - . + ofs *)
-                         jit_reloc (RelocRel32 (jit_label_name lbl));
-                         jit_longn (Nativeint.of_int32 ofs));
-      efa_def_label = jit_label;
-      efa_string = jit_asciz };
-  jit_finalize()
+  jit_data();
+  jit_align 0 8;
+  List.iter emit_float_constant !float_constants;
+  Jitaux.end_assembly()
+
