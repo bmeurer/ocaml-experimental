@@ -29,8 +29,8 @@ open Emitaux
 
 module Addr = Nativeint
 
-external ndl_malloc: int -> int -> Addr.t * Addr.t = "caml_natdynlink_malloc"
-external ndl_memcpy: Addr.t -> string -> int -> unit = "caml_natdynlink_memcpy" "noalloc"
+external nj_malloc: int -> int -> Addr.t * Addr.t = "caml_natjit_malloc"
+external nj_memcpy: Addr.t -> string -> int -> unit = "caml_natjit_memcpy" "noalloc"
 external ndl_addsym: string -> Addr.t -> unit = "caml_natdynlink_addsym" "noalloc"
 external ndl_getsym: string -> Addr.t = "caml_natdynlink_getsym"
 
@@ -121,12 +121,12 @@ let jit_patch_reloc (sec, ofs, rel) =
   end
 
 let jit_memcpy_sec sec =
-  ndl_memcpy sec.sec_addr sec.sec_buf sec.sec_pos
+  nj_memcpy sec.sec_addr sec.sec_buf sec.sec_pos
 
 let jit_finalize () =
   let text_size = jit_text_sec.sec_pos in
   let data_size = jit_data_sec.sec_pos in
-  let (text, data) = ndl_malloc text_size data_size in
+  let (text, data) = nj_malloc text_size data_size in
   jit_text_sec.sec_addr <- text;
   jit_data_sec.sec_addr <- data;
   (* Patch all relocations *)
