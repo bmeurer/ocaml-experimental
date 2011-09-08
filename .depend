@@ -829,13 +829,13 @@ toplevel/genprintval.cmx: typing/types.cmx typing/printtyp.cmx \
     parsing/longident.cmx typing/ident.cmx typing/env.cmx typing/datarepr.cmx \
     typing/ctype.cmx typing/btype.cmx toplevel/genprintval.cmi
 toplevel/jit.cmo: asmcomp/reg.cmi asmcomp/proc.cmi utils/misc.cmi \
-    asmcomp/mach.cmi asmcomp/linearize.cmi asmcomp/emitaux.cmi \
-    asmcomp/debuginfo.cmi asmcomp/compilenv.cmi asmcomp/cmm.cmi \
-    utils/clflags.cmi asmcomp/arch.cmo toplevel/jit.cmi
+    asmcomp/mach.cmi asmcomp/linearize.cmi toplevel/jitaux.cmi \
+    asmcomp/emitaux.cmi asmcomp/debuginfo.cmi asmcomp/compilenv.cmi \
+    asmcomp/cmm.cmi utils/clflags.cmi asmcomp/arch.cmo toplevel/jit.cmi
 toplevel/jit.cmx: asmcomp/reg.cmx asmcomp/proc.cmx utils/misc.cmx \
-    asmcomp/mach.cmx asmcomp/linearize.cmx asmcomp/emitaux.cmx \
-    asmcomp/debuginfo.cmx asmcomp/compilenv.cmx asmcomp/cmm.cmx \
-    utils/clflags.cmx asmcomp/arch.cmx toplevel/jit.cmi
+    asmcomp/mach.cmx asmcomp/linearize.cmx toplevel/jitaux.cmx \
+    asmcomp/emitaux.cmx asmcomp/debuginfo.cmx asmcomp/compilenv.cmx \
+    asmcomp/cmm.cmx utils/clflags.cmx asmcomp/arch.cmx toplevel/jit.cmi
 toplevel/jitaux.cmo: asmcomp/linearize.cmi asmcomp/emitaux.cmi \
     asmcomp/compilenv.cmi asmcomp/cmm.cmi asmcomp/arch.cmo \
     toplevel/jitaux.cmi
