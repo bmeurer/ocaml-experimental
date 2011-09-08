@@ -803,6 +803,7 @@ driver/pparse.cmx: utils/misc.cmx parsing/location.cmx utils/clflags.cmx \
 toplevel/genprintval.cmi: typing/types.cmi typing/path.cmi \
     typing/outcometree.cmi typing/env.cmi
 toplevel/jit.cmi: asmcomp/linearize.cmi asmcomp/cmm.cmi
+toplevel/jitaux.cmi: asmcomp/linearize.cmi asmcomp/cmm.cmi
 toplevel/opttopdirs.cmi: parsing/longident.cmi
 toplevel/opttoploop.cmi: utils/warnings.cmi typing/types.cmi typing/path.cmi \
     parsing/parsetree.cmi typing/outcometree.cmi parsing/longident.cmi \
@@ -835,6 +836,12 @@ toplevel/jit.cmx: asmcomp/reg.cmx asmcomp/proc.cmx utils/misc.cmx \
     asmcomp/mach.cmx asmcomp/linearize.cmx asmcomp/emitaux.cmx \
     asmcomp/debuginfo.cmx asmcomp/compilenv.cmx asmcomp/cmm.cmx \
     utils/clflags.cmx asmcomp/arch.cmx toplevel/jit.cmi
+toplevel/jitaux.cmo: asmcomp/linearize.cmi asmcomp/emitaux.cmi \
+    asmcomp/compilenv.cmi asmcomp/cmm.cmi asmcomp/arch.cmo \
+    toplevel/jitaux.cmi
+toplevel/jitaux.cmx: asmcomp/linearize.cmx asmcomp/emitaux.cmx \
+    asmcomp/compilenv.cmx asmcomp/cmm.cmx asmcomp/arch.cmx \
+    toplevel/jitaux.cmi
 toplevel/opttopdirs.cmo: utils/warnings.cmi typing/types.cmi \
     typing/printtyp.cmi typing/path.cmi toplevel/opttoploop.cmi \
     utils/misc.cmi parsing/longident.cmi typing/ident.cmi typing/env.cmi \
