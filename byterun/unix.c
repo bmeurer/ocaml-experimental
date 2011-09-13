@@ -178,6 +178,11 @@ void * caml_dlopen(char * libname, int for_execution, int global)
   return flexdll_dlopen(libname, flags);
 }
 
+void * caml_rtld_default(void)
+{
+  return flexdll_dlopen(NULL, 0);
+}
+
 void caml_dlclose(void * handle)
 {
   flexdll_dlclose(handle);
@@ -190,7 +195,7 @@ void * caml_dlsym(void * handle, char * name)
 
 void * caml_globalsym(char * name)
 {
-  return flexdll_dlsym(flexdll_dlopen(NULL,0), name);
+  return flexdll_dlsym(caml_rtld_default(), name);
 }
 
 char * caml_dlerror(void)
@@ -215,6 +220,15 @@ void * caml_dlopen(char * libname, int for_execution, int global)
 {
   return dlopen(libname, RTLD_NOW | (global ? RTLD_GLOBAL : RTLD_LOCAL) | RTLD_NODELETE);
   /* Could use RTLD_LAZY if for_execution == 0, but needs testing */
+}
+
+void * caml_rtld_default(void)
+{
+#ifdef RTLD_DEFAULT
+  return RTLD_DEFAULT;
+#else
+  return NULL;
+#endif
 }
 
 void caml_dlclose(void * handle)
@@ -250,6 +264,11 @@ char * caml_dlerror(void)
 #else
 
 void * caml_dlopen(char * libname, int for_execution, int global)
+{
+  return NULL;
+}
+
+void * caml_rtld_default(void)
 {
   return NULL;
 }

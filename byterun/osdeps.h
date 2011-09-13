@@ -46,6 +46,9 @@ extern char * caml_search_dll_in_path(struct ext_table * path, char * name);
    Return [NULL] on error. */
 extern void * caml_dlopen(char * libname, int for_execution, int global);
 
+/* Returns an RTLD_DEFAULT equivalent handle. */
+extern void * caml_rtld_default(void);
+
 /* Close a shared library handle */
 extern void caml_dlclose(void * handle);
 

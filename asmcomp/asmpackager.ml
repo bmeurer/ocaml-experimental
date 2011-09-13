@@ -21,6 +21,8 @@ open Lambda
 open Clambda
 open Cmx_format
 
+module Asmgen = Asmgen.Make(Emit)
+
 type error =
     Illegal_renaming of string * string
   | Forward_reference of string * string

@@ -19,6 +19,8 @@ open Config
 open Format
 open Typedtree
 
+module Asmgen = Asmgen.Make(Emit)
+
 (* Initialize the search path.
    The current directory is always searched first,
    then the directories specified with the -I option (in command-line order),

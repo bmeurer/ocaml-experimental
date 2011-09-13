@@ -1,3 +1,23 @@
+/***********************************************************************/
+/*                                                                     */
+/*                           Objective Caml                            */
+/*                                                                     */
+/*                  Benedikt Meurer, University of Siegen              */
+/*                                                                     */
+/*    Copyright 2011 Lehrstuhl für Compilerbau und Softwareanalyse,    */
+/*    Universität Siegen. All rights reserved. This file is distri-    */
+/*    buted under the terms of the Q Public License version 1.0.       */
+/*                                                                     */
+/***********************************************************************/
+
+/* $Id$ */
+
+/* Dynamic link (and JIT) support for the native runtime */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include "misc.h"
 #include "mlvalues.h"
 #include "memory.h"
@@ -8,17 +28,64 @@
 #include "osdeps.h"
 #include "fail.h"
 
-#include <stdio.h>
-#include <string.h>
+#if 0
+# define D(fmt, ...) do { fprintf(stderr, (fmt), ##__VA_ARGS__); } while (0)
+#else
+# define D(fmt, ...) do {} while (0)
+#endif
+
+struct symbol {
+  struct symbol *next;
+  void          *addr;
+  char           name[1];
+};
+
+#define SYMTBLSZ 113
+
+static struct symbol *symtbl[SYMTBLSZ] = { NULL, };
+
+static uint32 symhash(const void *v){
+  /* This actually implements the widely used string hash apparently
+   * posted by Daniel Bernstein to comp.lang.c once upon a time... */
+  const signed char *p = v;
+  uint32 h = 5381;
+  while (*p != '\0')
+    h = (h << 5) + h + *p++;
+  return h % SYMTBLSZ;
+}
+
+static void addsym(char *name, void *addr){
+  mlsize_t namelen = strlen(name);
+  struct symbol *sym = malloc(sizeof(struct symbol) + namelen);
+  struct symbol **symtblp = &symtbl[symhash(name)];
+  memcpy(sym->name, name, namelen + 1);
+  sym->addr = addr;
+  sym->next = *symtblp;
+  *symtblp = sym;
+}
 
 static void *getsym(void *handle, char *module, char *name){
-  char *fullname = malloc(strlen(module) + strlen(name) + 5);
-  void *sym;
-  sprintf(fullname, "caml%s%s", module, name);
-  sym = caml_dlsym (handle, fullname);
-  /*  printf("%s => %lx\n", fullname, (uintnat) sym); */
-  free(fullname);
-  return sym;
+  void *addr = NULL;
+  struct symbol *sym;
+  char *fullname = name;
+  if (module != NULL) {
+    fullname = malloc(strlen(module) + strlen(name) + 5);
+    sprintf(fullname, "caml%s%s", module, name);
+  }
+  for (sym = symtbl[symhash(fullname)]; sym != NULL; sym = sym->next){
+    if (strcmp(sym->name, fullname) == 0){
+      addr = sym->addr;
+      break;
+    }
+  }
+  if (!addr) addr = caml_dlsym(handle, fullname);
+  D("getsym(\"%s\") = %p\n", fullname, addr);
+  if (name != fullname) free(fullname);
+  return addr;
+}
+
+static void *getglobalsym(char *name){
+  return getsym(caml_rtld_default(), NULL, name);
 }
 
 extern char caml_globals_map[];
@@ -40,16 +107,16 @@ CAMLprim value caml_natdynlink_open(value filename, value global)
   void *sym;
   void *handle;
 
-  /* TODO: dlclose in case of error... */
-
   handle = caml_dlopen(String_val(filename), 1, Int_val(global));
 
   if (NULL == handle)
     CAMLreturn(caml_copy_string(caml_dlerror()));
 
-  sym = caml_dlsym(handle, "caml_plugin_header");
-  if (NULL == sym)
+  sym = getsym(handle, NULL, "caml_plugin_header");
+  if (NULL == sym){
+    caml_dlclose(handle);
     CAMLreturn(caml_copy_string("not an OCaml plugin"));
+  }
 
   res = caml_alloc_tuple(2);
   Field(res, 0) = (value) handle;
@@ -120,7 +187,30 @@ CAMLprim value caml_natdynlink_loadsym(value symbol)
   CAMLparam1 (symbol);
   CAMLlocal1 (sym);
 
-  sym = (value) caml_globalsym(String_val(symbol));
+  sym = (value)getglobalsym(String_val(symbol));
   if (!sym) caml_failwith(String_val(symbol));
   CAMLreturn(sym);
+}
+
+/* JIT support */
+
+CAMLprim value caml_natdynlink_run_jit(value symbol)
+{
+  D("caml_natdynlink_run_jit(\"%s\")\n", String_val(symbol));
+  return caml_natdynlink_run(caml_rtld_default(), symbol);
+}
+
+CAMLprim value caml_natdynlink_addsym(value name, value addr)
+{
+  D("caml_natdynlink_addsym(\"%s\", %p)\n", String_val(name), (void *)Nativeint_val(addr));
+  addsym(String_val(name), (void *)Nativeint_val(addr));
+  return Val_unit;
+}
+
+CAMLprim value caml_natdynlink_getsym(value name)
+{
+  void *addr;
+  addr = getglobalsym(String_val(name));
+  if (!addr) caml_failwith(String_val(name));
+  return caml_copy_nativeint((intnat)addr);
 }

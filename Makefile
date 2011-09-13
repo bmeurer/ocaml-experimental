@@ -103,6 +103,7 @@ TOPLIB=$(UTILS) $(PARSING) $(TYPING) $(COMP) $(BYTECOMP) $(TOPLEVEL)
 TOPOBJS=$(TOPLEVELLIB) $(TOPLEVELSTART)
 
 NATTOPOBJS=$(OPTUTILS) $(PARSING) $(TYPING) $(COMP) $(ASMCOMP) \
+  toplevel/jitaux.cmo toplevel/jit.cmo \
   driver/pparse.cmo driver/opterrors.cmo driver/optcompile.cmo \
   driver/main_args.cmo \
   toplevel/genprintval.cmo toplevel/opttoploop.cmo toplevel/opttopdirs.cmo \
@@ -300,6 +301,7 @@ install:
 	done
 	cd ocamldoc; $(MAKE) install
 	if test -f ocamlopt; then $(MAKE) installopt; else :; fi
+	if test -f ocamlnat; then $(MAKE) installnat; else :; fi
 	if test -f debugger/ocamldebug; then (cd debugger; $(MAKE) install); \
 	   else :; fi
 	cp config/Makefile $(LIBDIR)/Makefile.config
@@ -320,6 +322,11 @@ installopt:
 	  then cp ocamlopt.opt $(BINDIR)/ocamlopt.opt$(EXE); else :; fi
 	if test -f lex/ocamllex.opt; \
 	  then cp lex/ocamllex.opt $(BINDIR)/ocamllex.opt$(EXE); else :; fi
+
+# Installation of the native toplevel
+
+installnat:
+	cp ocamlnat $(BINDIR)/ocamlnat$(EXE)
 
 clean:: partialclean
 
@@ -362,7 +369,7 @@ partialclean::
 
 ocamlnat: ocamlopt otherlibs/dynlink/dynlink.cmxa $(NATTOPOBJS:.cmo=.cmx)
 	$(CAMLOPT) $(LINKFLAGS) otherlibs/dynlink/dynlink.cmxa -o ocamlnat \
-	           $(NATTOPOBJS:.cmo=.cmx) -linkall
+	           $(NATTOPOBJS:.cmo=.cmx) asmrun/natjit.o -linkall
 
 toplevel/opttoploop.cmx: otherlibs/dynlink/dynlink.cmxa
 
@@ -532,6 +539,14 @@ partialclean::
 
 beforedepend:: asmcomp/scheduling.ml
 
+toplevel/jit.ml: toplevel/$(ARCH)/jit.ml
+	ln -s $(ARCH)/jit.ml toplevel/jit.ml
+
+partialclean::
+	rm -f toplevel/jit.ml
+
+beforedepend:: toplevel/jit.ml
+
 # Preprocess the code emitters
 
 asmcomp/emit.ml: asmcomp/$(ARCH)/emit.mlp tools/cvt_emit
@@ -652,12 +667,12 @@ alldepend::
 
 # The extra libraries
 
-otherlibraries: ocamltools
+otherlibraries: library ocamltools
 	for i in $(OTHERLIBRARIES); do \
 	  (cd otherlibs/$$i; $(MAKE) RUNTIME=$(RUNTIME) all) || exit $$?; \
 	done
 
-otherlibrariesopt:
+otherlibrariesopt: otherlibraries
 	for i in $(OTHERLIBRARIES); do \
 	  (cd otherlibs/$$i; $(MAKE) allopt) || exit $$?; \
 	done
