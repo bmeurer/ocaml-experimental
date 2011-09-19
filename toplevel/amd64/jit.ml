@@ -575,16 +575,8 @@ let bound_error_sites = ref ([] : bound_error_call list)
 let bound_error_call = ref 0
 
 let bound_error_label dbg =
-  if !Clflags.debug then begin
-    let lbl_bound_error = new_label() in
-    let lbl_frame = record_frame_label Reg.Set.empty dbg in
-    bound_error_sites :=
-     { bd_lbl = lbl_bound_error; bd_frame = lbl_frame } :: !bound_error_sites;
-   lbl_bound_error
- end else begin
-   if !bound_error_call = 0 then bound_error_call := new_label();
-   !bound_error_call
- end
+ if !bound_error_call = 0 then bound_error_call := new_label();
+ !bound_error_call
 
 let emit_call_bound_error bd =
   jit_label bd.bd_lbl;
