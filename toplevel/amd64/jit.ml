@@ -768,9 +768,7 @@ let emit_instr fallthrough i =
           jit_call_symbol s
         end
     | Lop(Istackoffset n) ->
-        if n < 0
-        then jit_addq (Immediate (-n)) rsp
-        else jit_subq (Immediate n) rsp;
+        jit_subq (Immediate n) rsp;
         stack_offset := !stack_offset + n
     | Lop(Iload(chunk, addr)) ->
         let dest = i.res.(0) in

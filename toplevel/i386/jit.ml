@@ -825,9 +825,7 @@ let emit_instr fallthrough i =
           jit_call_symbol s
         end
     | Lop(Istackoffset n) ->
-        if n < 0
-        then jit_addl (Immediate (Nativeint.of_int (-n))) esp
-        else jit_subl (Immediate (Nativeint.of_int n)) esp;
+        jit_subl (Immediate (Nativeint.of_int n)) esp;
         stack_offset := !stack_offset + n
     | Lop(Iload(chunk, addr)) ->
         let dest = i.res.(0) in
