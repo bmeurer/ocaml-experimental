@@ -556,28 +556,15 @@ let emit_call_gc gc =
   jit_label gc.gc_frame;
   jit_jmp_label gc.gc_return_lbl
 
-(* Record calls to caml_ml_array_bound_error.
-   In -g mode, we maintain one call to caml_ml_array_bound_error
-   per bound check site.  Without -g, we can share a single call. *)
+(* Record calls to caml_ml_array_bound_error. *)
 
-type bound_error_call =
-  { bd_lbl: label;                      (* Entry label *)
-    bd_frame: label }                   (* Label of frame descriptor *)
-
-let bound_error_sites = ref ([] : bound_error_call list)
 let bound_error_call = ref 0
 
 let bound_error_label dbg =
  if !bound_error_call = 0 then bound_error_call := new_label();
  !bound_error_call
 
-let emit_call_bound_error bd =
-  jit_label bd.bd_lbl;
-  jit_call_symbol "caml_ml_array_bound_error";
-  jit_label bd.bd_frame
-
 let emit_call_bound_errors() =
-  List.iter emit_call_bound_error !bound_error_sites;
   if !bound_error_call > 0 then begin
     jit_label !bound_error_call;
     jit_call_symbol "caml_ml_array_bound_error"
@@ -1149,7 +1136,6 @@ let fundecl fundecl =
   tailrec_entry_point := new_label();
   stack_offset := 0;
   call_gc_sites := [];
-  bound_error_sites := [];
   bound_error_call := 0;
   jit_text();
   jit_align 0 16;
