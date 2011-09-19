@@ -26,8 +26,9 @@ val jit_symbol_tag: string -> tag
 external jit_label_tag: Linearize.label -> tag = "%identity"
 
 type reloc =
-    RelocAbs of tag (* 32/64bit absolute *)
-  | RelocRel of tag (* 32bit relative *)
+    RelocAbs32 of tag (* 32bit absolute *)
+  | RelocAbs64 of tag (* 64bit absolute *)
+  | RelocRel32 of tag (* 32bit relative *)
 val jit_reloc: reloc -> unit
 
 val jit_int8: int -> unit
