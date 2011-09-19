@@ -698,8 +698,8 @@ let tailrec_entry_point = ref 0
 let float_constants = ref ([] : (label * string) list)
 
 (* Labels for caml_absf_mask and caml_negf_mask *)
-let absf_mask = ref (None : label option)
-let negf_mask = ref (None : label option)
+let absf_mask_lbl = ref (0 : label)
+let negf_mask_lbl = ref (0 : label)
 
 let emit_instr fallthrough i =
     match i.desc with
@@ -876,13 +876,11 @@ let emit_instr fallthrough i =
         (* We have i.arg.(0) = i.res.(0) *)
         (instr_for_intop op) (Immediate n) (emit_reg i.res.(0))
     | Lop(Iabsf) ->
-        let lbl = (match absf_mask with {contents = Some lbl } -> lbl
-                                      | _ -> let lbl = new_label() in absf_mask := Some lbl; lbl) in
-        jit_andpd (MemoryTag(jit_label_tag lbl)) (emit_reg i.res.(0))
+        if !absf_mask_lbl == 0 then absf_mask_lbl := new_label();
+        jit_andpd (MemoryTag(jit_label_tag !absf_mask_lbl)) (emit_reg i.res.(0))
     | Lop(Inegf) ->
-        let lbl = (match negf_mask with {contents = Some lbl } -> lbl
-                                      | _ -> let lbl = new_label() in negf_mask := Some lbl; lbl) in
-        jit_xorpd (MemoryTag(jit_label_tag lbl)) (emit_reg i.res.(0))
+        if !negf_mask_lbl == 0 then negf_mask_lbl := new_label();
+        jit_xorpd (MemoryTag(jit_label_tag !negf_mask_lbl)) (emit_reg i.res.(0))
     | Lop(Iaddf | Isubf | Imulf | Idivf as floatop) ->
         (instr_for_floatop floatop) (emit_reg i.arg.(1)) (emit_reg i.res.(0))
     | Lop(Ifloatofint) ->
@@ -1037,25 +1035,21 @@ let data = Jitaux.data
 let begin_assembly() =
   externals := [];
   float_constants := [];
-  absf_mask := None;
-  negf_mask := None;
+  absf_mask_lbl := 0;
+  negf_mask_lbl := 0;
   Jitaux.begin_assembly()
 
 let end_assembly() =
   jit_data();
   jit_align 0 16;
   (* from amd64.S; emit these constants on demand *)
-  begin match absf_mask with
-    { contents = Some lbl } ->
-      jit_label lbl;
-      jit_int64L 0x7FFFFFFFFFFFFFFFL; jit_int64L 0xFFFFFFFFFFFFFFFFL
-  | _ -> ()
+  if !absf_mask_lbl != 0 then begin
+    jit_label !absf_mask_lbl;
+    jit_int64L 0x7FFFFFFFFFFFFFFFL; jit_int64L 0xFFFFFFFFFFFFFFFFL
   end;
-  begin match negf_mask with
-    { contents = Some lbl } ->
-      jit_label lbl;
-      jit_int64L 0x8000000000000000L; jit_int64L 0x0000000000000000L
-  | _ -> ()
+  if !negf_mask_lbl != 0 then begin
+    jit_label !negf_mask_lbl;
+    jit_int64L 0x8000000000000000L; jit_int64L 0x0000000000000000L
   end;
   (* Output the external address table *)
   List.iter (fun (sym, lbl) ->
