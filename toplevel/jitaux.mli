@@ -41,8 +41,6 @@ val jit_int32n: nativeint -> unit
 val jit_int64: int -> unit
 val jit_int64L: int64 -> unit
 val jit_int64n: nativeint -> unit
-val jit_int: int -> unit
-val jit_intn: nativeint -> unit
 val jit_ascii: string -> unit
 val jit_asciz: string -> unit
 

@@ -139,9 +139,6 @@ let jit_reloc reloc =
   let sec = !curr_sec in
   relocs := (sec, sec.sec_pos, reloc) :: !relocs
 
-let jit_reloc_abs tag =
-  jit_reloc (if Arch.size_addr == 4 then RelocAbs32 tag else RelocAbs64 tag)
-
 let patch_reloc (sec, ofs, rel) =
   match rel with
     RelocAbs32 tag ->
@@ -205,12 +202,6 @@ let jit_int64 n =
 let jit_int64n n =
   jit_int64L (Int64.of_nativeint n)
 
-let jit_int =
-  if Arch.size_addr == 4 then jit_int32 else jit_int64
-
-let jit_intn =
-  if Arch.size_addr == 4 then jit_int32n else jit_int64n
-
 let jit_ascii str =
   let sec = !curr_sec in
   let pos = sec.sec_pos in
@@ -255,17 +246,29 @@ let data l =
       | Cint32 n ->
           jit_int32n n
       | Cint n ->
-          jit_intn n
+          if Arch.size_addr == 4 then jit_int32n n else jit_int64n n
       | Csingle f ->
           jit_int32l (Int32.bits_of_float (float_of_string f))
       | Cdouble f ->
           jit_int64L (Int64.bits_of_float (float_of_string f))
       | Csymbol_address s ->
-          jit_reloc_abs (jit_symbol_tag s);
-          jit_int 0
+          let tag = jit_symbol_tag s in
+          if Arch.size_addr == 4 then begin
+            jit_reloc (RelocAbs32 tag);
+            jit_int32l 0l
+          end else begin
+            jit_reloc (RelocAbs64 tag);
+            jit_int64L 0L
+          end
       | Clabel_address lbl ->
-          jit_reloc_abs (jit_label_tag (100000 + lbl));
-          jit_int 0
+          let tag = jit_label_tag (100000 + lbl) in
+          if Arch.size_addr == 4 then begin
+            jit_reloc (RelocAbs32 tag);
+            jit_int32l 0l
+          end else begin
+            jit_reloc (RelocAbs64 tag);
+            jit_int64L 0L
+          end
       | Cstring s ->
           jit_ascii s
       | Cskip n ->
@@ -295,12 +298,12 @@ let begin_assembly() =
   jit_symbol sym
 
 let efa =
-  { efa_label = (fun lbl ->
-                   jit_reloc_abs (jit_label_tag lbl);
-                   jit_int 0);
+  { efa_label = if Arch.size_addr == 4
+                then (fun lbl -> jit_reloc (RelocAbs32(jit_label_tag lbl)); jit_int32l 0l)
+                else (fun lbl -> jit_reloc (RelocAbs64(jit_label_tag lbl)); jit_int64L 0L);
     efa_16 = jit_int16;
     efa_32 = jit_int32l;
-    efa_word = jit_int;
+    efa_word = if Arch.size_addr == 4 then jit_int32 else jit_int64;
     efa_align = jit_align 0;
     efa_label_rel = (fun lbl ofs ->
                        (* .long lbl - . + ofs *)
