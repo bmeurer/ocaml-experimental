@@ -80,7 +80,7 @@ let update_interval_position intervals pos kind reg =
   if i.iend == 0 then begin
     i.ibegin <- off;
     i.reg <- reg;
-    i.ranges <- {rbegin = rbegin; rend = rend} :: i.ranges
+    i.ranges <- [{rbegin = rbegin; rend = rend}]
   end else begin
     let r = List.hd i.ranges in
     if r.rend == on - 1 || r.rend == on - 2 then
@@ -125,44 +125,44 @@ let build_intervals fd =
                       ranges = []; }) in
   let pos = ref 0 in
   let rec walk_instruction i =
-    let pos = incr pos; !pos in
-    update_interval_position_by_instr intervals i pos;
+    incr pos;
+    update_interval_position_by_instr intervals i !pos;
     begin match i.desc with
       Iend -> ()
     | Iop(Icall_ind | Icall_imm _ | Iextcall(_, true)
           | Itailcall_ind | Itailcall_imm _) ->
         walk_instruction i.next
     | Iop _ ->
-        insert_destroyed_at_oper intervals i pos;
+        insert_destroyed_at_oper intervals i !pos;
         walk_instruction i.next
     | Ireturn ->
-        insert_destroyed_at_oper intervals i pos;
+        insert_destroyed_at_oper intervals i !pos;
         walk_instruction i.next
     | Iifthenelse(_, ifso, ifnot) ->
-        insert_destroyed_at_oper intervals i pos;
+        insert_destroyed_at_oper intervals i !pos;
         walk_instruction ifso;
         walk_instruction ifnot;
         walk_instruction i.next
     | Iswitch(_, cases) ->
-        insert_destroyed_at_oper intervals i pos;
+        insert_destroyed_at_oper intervals i !pos;
         Array.iter walk_instruction cases;
         walk_instruction i.next
     | Iloop body ->
-        insert_destroyed_at_oper intervals i pos;
+        insert_destroyed_at_oper intervals i !pos;
         walk_instruction body;
         walk_instruction i.next
     | Icatch(_, body, handler) ->
-        insert_destroyed_at_oper intervals i pos;
+        insert_destroyed_at_oper intervals i !pos;
         walk_instruction body;
         walk_instruction handler;
         walk_instruction i.next
     | Iexit _ ->
-        insert_destroyed_at_oper intervals i pos;
+        insert_destroyed_at_oper intervals i !pos;
         walk_instruction i.next
     | Itrywith(body, handler) ->
-        insert_destroyed_at_oper intervals i pos;
+        insert_destroyed_at_oper intervals i !pos;
         walk_instruction body;
-        insert_destroyed_at_raise intervals pos;
+        insert_destroyed_at_raise intervals !pos;
         walk_instruction handler;
         walk_instruction i.next
     | Iraise ->
