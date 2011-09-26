@@ -33,6 +33,11 @@ type t =
     mutable ranges: range list;
   }
 
+type operand_type =
+    OTResult
+  | OTArgument
+  | OTLive
+
 let interval_list = ref ([] : t list)
 let fixed_interval_list = ref ([] : t list)
 let all_intervals() = !interval_list
@@ -44,7 +49,7 @@ let overlap i0 i1 =
   let rec overlap_ranges rl0 rl1 =
     match rl0, rl1 with
       r0 :: rl0', r1 :: rl1' ->
-        if r0.rend > r1.rbegin && r1.rend > r0.rbegin then true
+        if r0.rend >= r1.rbegin && r1.rend >= r0.rbegin then true
         else if r0.rend < r1.rend then overlap_ranges rl0' rl1
         else if r0.rend > r1.rend then overlap_ranges rl0 rl1'
         else overlap_ranges rl0' rl1'
@@ -55,7 +60,7 @@ let is_live i pos =
   let rec is_live_in_ranges = function
     [] -> false
   | r :: rl -> if pos < r.rbegin then false
-               else if pos < r.rend then true
+               else if pos <= r.rend then true
                else is_live_in_ranges rl in
   is_live_in_ranges i.ranges
 
@@ -66,54 +71,59 @@ let remove_expired_ranges i pos =
                else filter rl' in
   i.ranges <- filter i.ranges
 
-let update_interval_position intervals pos_tst pos_set use_kind reg =
+let update_interval_ranges interval range on off operand_type =
+  let b = match operand_type with
+            OTResult -> off
+          | OTArgument | OTLive -> on in
+
+  let e = match operand_type with
+            OTResult | OTLive -> off
+          | OTArgument -> on in
+
+  interval.iend <- e;
+  if range.rend = on - 1 || range.rend = on - 2 then
+    range.rend <- e
+  else
+    interval.ranges <- {rbegin=b; rend=e} :: interval.ranges
+
+let update_interval_position intervals pos operand_type reg =
   let i = intervals.(reg.stamp) in
-  if i.iend == 0 then begin
-    i.ibegin <- pos_tst;
-    i.iend <- pos_set;
+  let on = pos lsl 1 in
+  let off = on + 1 in
+  if i.iend = 0 then begin
+    i.ibegin <- off;
+    i.iend <- off;
     i.reg <- reg;
-    i.ranges <- [{rbegin = pos_tst; rend = pos_set}]
-  end;
-  match i.ranges with
-    [] ->
-      Misc.fatal_error "Illegal empty range"
-  | range :: _ ->
-      i.iend <- pos_set;
-      if (range.rend == pos_tst || (range.rend + 1) == pos_tst) && use_kind != 1 then
-        range.rend <- pos_set
-      else if range.rbegin == pos_tst && range.rend == pos_tst && use_kind == 1 then
-        range.rend <- pos_set
-      else
-        i.ranges <- {rbegin = pos_tst; rend = pos_set} :: i.ranges
-
-let update_interval_position_by_array intervals regs pos_tst pos_set use_kind =
-  Array.iter (update_interval_position intervals pos_tst pos_set use_kind) regs
-         
-let update_interval_position_by_set intervals regs pos_tst pos_set use_kind =
-  Set.iter (update_interval_position intervals pos_tst pos_set use_kind) regs
- 
-let update_interval_position_by_instr intervals instr pos_tst pos_set =
-  update_interval_position_by_array intervals instr.arg pos_tst pos_set 0;
-  update_interval_position_by_array intervals instr.res pos_set pos_set 1;
-  update_interval_position_by_set intervals instr.live pos_tst pos_set 0
-
-let insert_pos_for_live intervals instr pos =
-  if (not (Set.is_empty instr.live)) || Array.length instr.arg > 0 then
-  begin
-    pos := succ !pos;
-    update_interval_position_by_set intervals instr.live !pos !pos 0;
-    update_interval_position_by_array intervals instr.arg !pos !pos 0
+    update_interval_ranges i {rbegin=(-100); rend=(-100)} on off operand_type
   end
+  else begin
+    match i.ranges with
+      [] ->
+        Misc.fatal_error "Illegal empty range"
+    | range :: _ ->
+        update_interval_ranges i range on off operand_type
+  end
+
+let update_interval_position_by_array intervals regs pos operand_type=
+  Array.iter (update_interval_position intervals pos operand_type) regs
+         
+let update_interval_position_by_set intervals regs pos operand_type=
+  Set.iter (update_interval_position intervals pos operand_type) regs
+ 
+let update_interval_position_by_instr intervals instr pos =
+  update_interval_position_by_array intervals instr.arg pos OTArgument;
+  update_interval_position_by_array intervals instr.res pos OTResult;
+  update_interval_position_by_set intervals instr.live pos OTLive
 
 let insert_destroyed_at_oper intervals instr pos =
   let destroyed = Proc.destroyed_at_oper instr.desc in
   if Array.length destroyed > 0 then
-    update_interval_position_by_array intervals destroyed pos pos 1 
+    update_interval_position_by_array intervals destroyed pos OTResult
 
 let insert_destroyed_at_raise intervals pos =
   let destroyed = Proc.destroyed_at_raise in
   if Array.length destroyed > 0 then
-    update_interval_position_by_array intervals destroyed pos pos 1
+    update_interval_position_by_array intervals destroyed pos OTResult
 
 (* Build all intervals.
    The intervals will be expanded by one step at the start and end
@@ -128,83 +138,51 @@ let build_intervals fd =
                       iend = 0;
                       ranges = []; }) in
   let pos = ref 0 in
-  let rec walk_instruction i shift =
-    pos := !pos + 1 + shift;
-    update_interval_position_by_instr intervals i (!pos - shift) !pos;
+  let rec walk_instruction i =
+    pos := !pos + 1;
+    update_interval_position_by_instr intervals i !pos;
     begin match i.desc with
-      Iend ->
-        (* Iend ends a basic block *)
-        insert_pos_for_live intervals i pos
+      Iend -> ()
     | Iop(Icall_ind | Icall_imm _ | Iextcall(_, true)
           | Itailcall_ind | Itailcall_imm _) ->
-        walk_instruction i.next 0
+        walk_instruction i.next
     | Iop _ ->
         insert_destroyed_at_oper intervals i !pos;
-        walk_instruction i.next 0
+        walk_instruction i.next
     | Ireturn ->
         insert_destroyed_at_oper intervals i !pos;
-        (* Ireturn ends a basic block *)
-        insert_pos_for_live intervals i pos;     
-        walk_instruction i.next 0
+        walk_instruction i.next
     | Iifthenelse(_, ifso, ifnot) ->
         insert_destroyed_at_oper intervals i !pos;
-        (* Iifthenelse ends a basic block *)
-        insert_pos_for_live intervals i pos;
-        (* ifso starts a new basic block *)
-        walk_instruction ifso 1;
-        (* ifnot starts a new basic block *)
-        walk_instruction ifnot 1;
-        (* next starts a new basic block *)
-        walk_instruction i.next 1
+        walk_instruction ifso;
+        walk_instruction ifnot;
+        walk_instruction i.next
     | Iswitch(_, cases) ->
         insert_destroyed_at_oper intervals i !pos;
-        (* Iswitch ends a basic block *)
-        insert_pos_for_live intervals i pos;
-        (* Each case starts a new basic block *)
-        Array.iter (fun case -> walk_instruction case 1) cases;
-        (* next starts a new basic block *)
-        walk_instruction i.next 1
+        Array.iter (fun case -> walk_instruction case) cases;
+        walk_instruction i.next
     | Iloop body ->
         insert_destroyed_at_oper intervals i !pos;
-        (* Iloop ends a basic block *)
-        insert_pos_for_live intervals i pos;
-        (* body starts a new basic block *)
-        walk_instruction body 1;
-        (* next starts a new basic block *)
-        walk_instruction i.next 1
+        walk_instruction body;
+        walk_instruction i.next
     | Icatch(_, body, handler) ->
         insert_destroyed_at_oper intervals i !pos;
-        (* Icatch ends a basic block *)
-        insert_pos_for_live intervals i pos;
-        (* body starts a new basic block *)
-        walk_instruction body 1;
-        (* handler starts a new basic block *)
-        walk_instruction handler 1;
-        (* next starts a new basic block *)
-        walk_instruction i.next 1
+        walk_instruction body;
+        walk_instruction handler;
+        walk_instruction i.next
     | Iexit _ ->
         insert_destroyed_at_oper intervals i !pos;
-        (* Iexit ends a basic block *)
-        insert_pos_for_live intervals i pos
+        walk_instruction i.next
     | Itrywith(body, handler) ->
         insert_destroyed_at_oper intervals i !pos;
-        (* Itrywith ends a basic block *)
-        insert_pos_for_live intervals i pos;
-        (* body starts a new basic block *)
-        walk_instruction body 1;
-        (* handler starts a new basic block *)
-        insert_pos_for_live intervals handler pos;
+        walk_instruction body;
         insert_destroyed_at_raise intervals !pos;
-        walk_instruction handler 0;
-        (* nex starts a new basic block *)
-        walk_instruction i.next 1
+        walk_instruction handler;
+        walk_instruction i.next
     | Iraise ->
-        (* Iraise ends a basic block *)
-        insert_pos_for_live intervals i pos;
-        (* next starts a new basic block *)
-        walk_instruction i.next 1
+        walk_instruction i.next
     end in
-  walk_instruction fd.fun_body 1;
+  walk_instruction fd.fun_body;
   (* Generate the interval and fixed interval lists *)
   interval_list := []; 
   fixed_interval_list := []; 

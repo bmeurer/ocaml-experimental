@@ -45,13 +45,13 @@ let rec insert_interval_sorted i = function
   | j :: il -> j :: insert_interval_sorted i il
 
 let rec release_expired_fixed pos = function
-    i :: il when i.iend > pos ->
+    i :: il when i.iend >= pos ->
       Interval.remove_expired_ranges i pos;
       i :: release_expired_fixed pos il
   | _ -> []
 
 let rec release_expired_active ci pos = function
-    i :: il when i.iend > pos ->
+    i :: il when i.iend >= pos ->
       Interval.remove_expired_ranges i pos;
       if Interval.is_live i pos then
         i :: release_expired_active ci pos il
@@ -62,7 +62,7 @@ let rec release_expired_active ci pos = function
   | _ -> []
 
 let rec release_expired_inactive ci pos = function
-    i :: il when i.iend > pos ->
+    i :: il when i.iend >= pos ->
       Interval.remove_expired_ranges i pos;
       if not (Interval.is_live i pos) then 
         i :: release_expired_inactive ci pos il
@@ -157,7 +157,7 @@ let allocate_blocked_register i =
   end
 
 let walk_interval i =
-  let pos = i.ibegin in
+  let pos = i.ibegin land (lnot 0x01) in
   (* Release all intervals that have been expired at the current position *)
   Array.iter
     (fun ci ->
