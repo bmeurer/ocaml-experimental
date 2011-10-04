@@ -191,9 +191,9 @@ let jit_testq src dst =
     Immediate n, Register (*%rax*)0 when is_imm8 n ->
       jit_int8 0xa8;
       jit_int8 n
-  | Immediate n, rm when is_imm8 n ->
+  | Immediate n, (Register reg as rm) when is_imm8 n ->
       (* Add REX prefix for %spl, %bpl, %sil and %dil *)
-      let rex = match rm with Register r when r >= 4 && r < 8 -> rex | _ -> 0 in
+      let rex = if reg >= 4 && reg < 8 then rex else 0 in
       jit_mod_rm_reg rex 0xf6 rm 0;
       jit_int8 n
   | Immediate n, Register (*%rax*)0 ->
