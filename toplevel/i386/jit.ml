@@ -158,14 +158,14 @@ let jit_mod_rm_reg opcodes rm reg =
       (* absolute addressing *)
       jit_opcodes opcodes;
       jit_modrm 0b00 0b101 reg;
-      jit_reloc (RelocAbs tag);
+      jit_reloc (RelocAbs32 tag);
       jit_int32 disp
   | MemoryTag(ireg, scale, disp, tag) ->
       (* absolute addressing plus scaled index *)
       jit_opcodes opcodes;
       jit_modrm 0b00 0b100 reg;
       jit_sib scale ireg 0b101;
-      jit_reloc (RelocAbs tag);
+      jit_reloc (RelocAbs32 tag);
       jit_int32 disp
   | _ ->
       assert false
@@ -207,7 +207,7 @@ let jit_movl src dst =
       jit_int32n n
   | ImmediateTag tag, rm ->
       jit_mod_rm_reg 0xc7 rm 0;
-      jit_reloc (RelocAbs tag);
+      jit_reloc (RelocAbs32 tag);
       jit_int32l 0l
   | rm, Register reg ->
       jit_mod_rm_reg 0x8b rm reg
@@ -301,7 +301,7 @@ let jit_jmpl dst =
 
 let jit_jmp_tag tag =
   jit_int8 0xe9;
-  jit_reloc (RelocRel tag);
+  jit_reloc (RelocRel32 tag);
   jit_int32l (-4l)
 
 let jit_jmp_label lbl =
@@ -315,7 +315,7 @@ let jit_calll dst =
 
 let jit_call_tag tag =
   jit_int8 0xe8;
-  jit_reloc (RelocRel tag);
+  jit_reloc (RelocRel32 tag);
   jit_int32l (-4l)
 
 let jit_call_label lbl =
@@ -336,7 +336,7 @@ let jit_pushl = function
       jit_int32n n
   | ImmediateTag tag ->
       jit_int8 0x68;
-      jit_reloc (RelocAbs tag);
+      jit_reloc (RelocAbs32 tag);
       jit_int32l 0l
   | Register reg ->
       jit_int8 (0x50 + reg)
@@ -364,7 +364,7 @@ external int_of_cc: cc -> int = "%identity"
 let jit_jcc_label cc lbl =
   jit_int8 0x0f;
   jit_int8 (0x80 + (int_of_cc cc));
-  jit_reloc (RelocRel(jit_label_tag lbl));
+  jit_reloc (RelocRel32(jit_label_tag lbl));
   jit_int32l (-4l)
 
 let jit_jb_label   lbl = jit_jcc_label B   lbl
@@ -556,36 +556,15 @@ let emit_call_gc gc =
   jit_label gc.gc_frame;
   jit_jmp_label gc.gc_return_lbl
 
-(* Record calls to caml_ml_array_bound_error.
-   In -g mode, we maintain one call to caml_ml_array_bound_error
-   per bound check site.  Without -g, we can share a single call. *)
+(* Record calls to caml_ml_array_bound_error. *)
 
-type bound_error_call =
-  { bd_lbl: label;                      (* Entry label *)
-    bd_frame: label }                   (* Label of frame descriptor *)
-
-let bound_error_sites = ref ([] : bound_error_call list)
 let bound_error_call = ref 0
 
 let bound_error_label dbg =
-  if !Clflags.debug then begin
-    let lbl_bound_error = new_label() in
-    let lbl_frame = record_frame_label Reg.Set.empty dbg in
-    bound_error_sites :=
-     { bd_lbl = lbl_bound_error; bd_frame = lbl_frame } :: !bound_error_sites;
-   lbl_bound_error
- end else begin
-   if !bound_error_call = 0 then bound_error_call := new_label();
-   !bound_error_call
- end
-
-let emit_call_bound_error bd =
-  jit_label bd.bd_lbl;
-  jit_call_symbol "caml_ml_array_bound_error";
-  jit_label bd.bd_frame
+ if !bound_error_call = 0 then bound_error_call := new_label();
+ !bound_error_call
 
 let emit_call_bound_errors() =
-  List.iter emit_call_bound_error !bound_error_sites;
   if !bound_error_call > 0 then begin
     jit_label !bound_error_call;
     jit_call_symbol "caml_ml_array_bound_error"
@@ -825,9 +804,7 @@ let emit_instr fallthrough i =
           jit_call_symbol s
         end
     | Lop(Istackoffset n) ->
-        if n < 0
-        then jit_addl (Immediate (Nativeint.of_int (-n))) esp
-        else jit_subl (Immediate (Nativeint.of_int n)) esp;
+        jit_subl (Immediate (Nativeint.of_int n)) esp;
         stack_offset := !stack_offset + n
     | Lop(Iload(chunk, addr)) ->
         let dest = i.res.(0) in
@@ -1113,7 +1090,7 @@ let emit_instr fallthrough i =
         jit_align 0 4;
         jit_label lbl;
         for i = 0 to Array.length jumptbl - 1 do
-          jit_reloc (RelocAbs(jit_label_tag jumptbl.(i)));
+          jit_reloc (RelocAbs32(jit_label_tag jumptbl.(i)));
           jit_int32l 0l
         done;
         jit_text()
@@ -1159,7 +1136,6 @@ let fundecl fundecl =
   tailrec_entry_point := new_label();
   stack_offset := 0;
   call_gc_sites := [];
-  bound_error_sites := [];
   bound_error_call := 0;
   jit_text();
   jit_align 0 16;

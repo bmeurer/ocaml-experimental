@@ -20,250 +20,46 @@ open Arch
 open Proc
 open Reg
 open Mach
+open Jitaux
 open Emitaux
 open Linearize
 
-let macosx =
-  match Config.system with
-  | "macosx" -> true
-  | _ -> false
+(* Test if a symbol is local for the current unit *)
 
-module Addr = Nativeint
+let is_local_symbol sym =
+  let cun = Compilenv.current_unit_name() in
+  try cun = (String.sub sym 0 (String.length cun))
+  with Invalid_argument _ -> false
 
-external ndl_malloc: int -> int -> Addr.t * Addr.t = "caml_natdynlink_malloc"
-external ndl_memcpy: Addr.t -> string -> int -> unit = "caml_natdynlink_memcpy" "noalloc"
-external ndl_addsym: string -> Addr.t -> unit = "caml_natdynlink_addsym" "noalloc"
-external ndl_getsym: string -> Addr.t = "caml_natdynlink_getsym"
+(* External address table *)
 
-type reloc =
-    RelocAbs64 of (*sym*)string
-  | RelocRel32 of (*sym*)string
-  | RelocDiff32 of (*sym1*)string * (*sym2*)string * (*disp*)int
-                   (* (sym1 - sym2) + disp *)
+let externals = ref ([] : (string * label) list)
 
-type section =
-  { mutable sec_buf: string;
-    mutable sec_pos: int;
-    mutable sec_addr: Addr.t }
-
-let new_sec () =
-  { sec_buf = String.create 1024;
-    sec_pos = 0;
-    sec_addr = 0n }
-
-let reset_sec sec =
-  sec.sec_buf <- String.create 1024;
-  sec.sec_pos <- 0
-
-let jit_text_sec = new_sec ()
-let jit_data_sec = new_sec ()
-let jit_got_sec = new_sec ()
-let jit_curr_sec = ref jit_text_sec
-
-let jit_globals = ref ([] : string list)
-let jit_relocs = ref ([] : (section * int * reloc) list)
-let jit_symbols = ref ([] : (string * (section * int)) list)
-let jit_got_entries = ref ([] : ((*sym*)string * (*lbl*)label) list)
-
-let jit_text () =
-  jit_curr_sec := jit_text_sec
-
-let jit_data () =
-  jit_curr_sec := jit_data_sec
-
-let jit_got () =
-  jit_curr_sec := jit_got_sec
-
-let jit_reset () =
-  reset_sec jit_text_sec;
-  reset_sec jit_data_sec;
-  reset_sec jit_got_sec;
-  jit_globals := [];
-  jit_relocs := [];
-  jit_symbols := [];
-  jit_got_entries := [];
-  jit_text ()
-
-let jit_addr_of_symbol sym =
+let jit_external_label_for_symbol sym =
   try
-    (* Check our own symbols first *)
-    let (sec, ofs) = List.assoc sym !jit_symbols in
-    Addr.add sec.sec_addr (Addr.of_int ofs)
+    List.assoc sym !externals
   with
     Not_found ->
-      (* Fallback to the global symbol table *)
-      ndl_getsym sym
-
-let jit_patch_reloc (sec, ofs, rel) =
-  let jit_patch_long str ofs n =
-    String.unsafe_set str ofs (Char.chr (n land 0xff));
-    String.unsafe_set str (ofs + 1) (Char.chr ((n asr 8) land 0xff));
-    String.unsafe_set str (ofs + 2) (Char.chr ((n asr 16) land 0xff));
-    String.unsafe_set str (ofs + 3) (Char.chr ((n asr 24) land 0xff))
-  in match rel with
-    RelocAbs64 sym ->
-      let addr = jit_addr_of_symbol sym in
-      jit_patch_long sec.sec_buf ofs (Addr.to_int addr);
-      jit_patch_long sec.sec_buf (ofs + 4) (Addr.to_int (Addr.shift_right addr 32))
-  | RelocRel32 sym ->
-      let saddr = jit_addr_of_symbol sym in
-      let raddr = Addr.add sec.sec_addr (Addr.of_int (ofs + 4)) in
-      let rel32 = Addr.sub saddr raddr in
-      jit_patch_long sec.sec_buf ofs (Addr.to_int rel32)
-  | RelocDiff32(sym1, sym2, disp) ->
-      let saddr1 = jit_addr_of_symbol sym1 in
-      let saddr2 = jit_addr_of_symbol sym2 in
-      let rel32 = Addr.sub saddr1 saddr2 in
-      let rel32 = Addr.add rel32 (Addr.of_int disp) in
-      jit_patch_long sec.sec_buf ofs (Addr.to_int rel32)
-
-let jit_memcpy_sec sec =
-  ndl_memcpy sec.sec_addr sec.sec_buf sec.sec_pos
-
-let jit_finalize () =
-  let text_size = Misc.align jit_text_sec.sec_pos 8 in
-  let got_size = jit_got_sec.sec_pos in
-  let data_size = jit_data_sec.sec_pos in
-  let (text, data) = ndl_malloc (text_size + got_size) data_size in
-  jit_text_sec.sec_addr <- text;
-  jit_data_sec.sec_addr <- data;
-  jit_got_sec.sec_addr <- Addr.add text (Addr.of_int text_size);
-  (* Patch all relocations *)
-  List.iter jit_patch_reloc !jit_relocs;
-  (* Copy section content *)
-  jit_memcpy_sec jit_text_sec;
-  jit_memcpy_sec jit_data_sec;
-  jit_memcpy_sec jit_got_sec;
-  (* Register the global symbols *)
-  List.iter (fun sym ->
-               let (sec, ofs) = List.assoc sym !jit_symbols in
-               let addr = Addr.add sec.sec_addr (Addr.of_int ofs) in
-               ndl_addsym sym addr)
-            !jit_globals
-
-let jit_byte n =
-  let sec = !jit_curr_sec in
-  let len = String.length sec.sec_buf in
-  let pos = sec.sec_pos in
-  if pos = len then begin
-    let content = String.create (len * 2) in
-    String.unsafe_blit sec.sec_buf 0 content 0 pos;
-    sec.sec_buf <- content
-  end;
-  String.unsafe_set sec.sec_buf pos (Char.chr (n land 0xff));
-  sec.sec_pos <- pos + 1
-
-let jit_word n =
-  jit_byte n;
-  jit_byte (n asr 8)
-
-let jit_long n =
-  jit_byte n;
-  jit_byte (n asr 8);
-  jit_byte (n asr 16);
-  jit_byte (n asr 24)
-
-let jit_quad n =
-  jit_long (Nativeint.to_int n);
-  jit_long (Nativeint.to_int (Nativeint.shift_right n 32))
-
-let jit_ascii s =
-  String.iter (fun c -> jit_byte (Char.code c)) s
-
-let jit_asciz s =
-  jit_ascii s;
-  jit_byte 0
-
-let jit_align n =
-  let sec = !jit_curr_sec in
-  let m = n - (sec.sec_pos mod n) in
-  if m <> n then
-    if sec == jit_text_sec then
-      match m with
-          2 -> jit_byte 0x8b; jit_byte 0xff
-        | 3 -> jit_byte 0x8d; jit_byte 0x49; jit_byte 0x00
-        | m -> for i = 1 to m do jit_byte 0x90 done
-    else
-      for i = 1 to m do jit_byte 0 done
-
-let rec jit_skip = function
-    0 -> ()
-  | n -> jit_byte 0; jit_skip (n - 1)
-
-let jit_symbol_define sym =
-  let sec = !jit_curr_sec in
-  jit_symbols := (sym, (sec, sec.sec_pos)) :: !jit_symbols
-
-let jit_symbol_name sym =
-  let buf = Buffer.create (1 + String.length sym) in
-  String.iter
-    (function
-        ('A'..'Z' | 'a'..'z' | '0'..'9' | '_') as c -> Buffer.add_char buf c
-      | c -> Printf.bprintf buf "$%02x" (Char.code c)) sym;
-  Buffer.contents buf
-
-let jit_symbol sym =
-  jit_symbol_define (jit_symbol_name sym)
-
-let jit_symbol_globl sym =
-  let sym = jit_symbol_name sym in
-  jit_symbol_define sym;
-  jit_globals := sym :: !jit_globals
-  
-let jit_globl sym =
-  jit_globals := (jit_symbol_name sym) :: !jit_globals
-
-let jit_label_name lbl =
-  ".L" ^ (string_of_int lbl)
-
-let jit_label lbl =
-  jit_symbol_define (jit_label_name lbl)
-
-(* Relocations *)
-
-let jit_reloc reloc =
-  let sec = !jit_curr_sec in
-  jit_relocs := (sec, sec.sec_pos, reloc) :: !jit_relocs
-
-let jit_reloc_abs64 sym =
-  jit_reloc (RelocAbs64 sym);
-  jit_skip 8
-
-let jit_reloc_diff32 lbl1 lbl2 ofs =
-  jit_reloc (RelocDiff32(jit_label_name lbl1, jit_label_name lbl2, ofs));
-  jit_long 0
-
-
-(* Global offset table management *)
-let jit_got_label_for_symbol sym =
-  try
-    List.assoc sym !jit_got_entries
-  with
-    Not_found ->
-      let lbl = new_label () in
-      let sec = !jit_curr_sec in
-      jit_got ();
-      jit_label lbl;
-      jit_reloc_abs64 sym;
-      jit_curr_sec := sec;
-      jit_got_entries := (sym, lbl) :: !jit_got_entries;
+      let lbl = new_label() in
+      externals := (sym, lbl) :: !externals;
       lbl
-
 
 (* Instructions *)
 
 type argument =
     Register of int
-  | Symbol of string
   | Memory of (*ireg*)int * (*scale*)int * (*breg*)int * (*disp*)int
               (* A value of -1 for breg means no base register *)
-  | Immediate of nativeint
+  | MemoryTag of tag
+  | Immediate of int
 
 let rax = Register 0
+let rdx = Register 2
 let rsp = Register 4
 let r14 = Register 14
 let r15 = Register 15
 let xmm15 = r15
+let al = rax
 
 let memscale disp ireg scale =
   match ireg with
@@ -289,22 +85,20 @@ let rexx = 0b00000010
 let rexb = 0b00000001
 
 let is_imm8 n = n >= -128 && n <= 127
-let is_imm8n n = n >= -128n && n <= 127n
 
 let jit_rex rex reg_reg reg_index reg_opcode =
   let rex = (rex
               lor (if reg_reg > 7 then rexr else 0)
               lor (if reg_index > 7 then rexx else 0)
               lor (if reg_opcode > 7 then rexb else 0)) in
-  if rex != 0 then jit_byte (rex lor 0b01000000)
+  if rex != 0 then jit_int8 (rex lor 0b01000000)
 
 let jit_mod_rm_reg rex opcodes rm reg =
   let jit_opcodes opcodes =
-    if opcodes land 0xff0000 != 0 then jit_byte (opcodes asr 16);
-    if opcodes land 0x00ff00 != 0 then jit_byte (opcodes asr 8);
-    jit_byte opcodes
+    if opcodes land 0x00ff00 != 0 then jit_int8 (opcodes asr 8);
+    jit_int8 opcodes
   and jit_modrm m rm reg =
-    jit_byte ((m lsl 6) lor (rm land 7) lor ((reg land 7) lsl 3))
+    jit_int8 ((m lsl 6) lor (rm land 7) lor ((reg land 7) lsl 3))
   and jit_sib s i b =
     let s = (match s with
                 1 -> 0
@@ -312,7 +106,7 @@ let jit_mod_rm_reg rex opcodes rm reg =
               | 4 -> 2
               | 8 -> 3
               | _ -> assert false) in
-    jit_byte ((s lsl 6) lor ((i land 7) lsl 3) lor (b land 7))
+    jit_int8 ((s lsl 6) lor ((i land 7) lsl 3) lor (b land 7))
   in match rm with
   | Register rm ->
       jit_rex rex reg 0 rm;
@@ -328,18 +122,18 @@ let jit_mod_rm_reg rex opcodes rm reg =
       jit_opcodes opcodes;
       jit_modrm 0b01 0b100 reg;
       jit_sib 1 0b100 breg;
-      jit_byte disp
+      jit_int8 disp
   | Memory(((*%rsp*)4 | (*%r12*)12) as breg, 1, -1, disp) ->
       jit_rex rex reg 0 breg;
       jit_opcodes opcodes;
       jit_modrm 0b10 0b100 reg;
       jit_sib 1 0b100 breg;
-      jit_long disp
+      jit_int32 disp
   | Memory(((*%rbp*)5 | (*%r13*)13) as breg, 1, -1, disp) when is_imm8 disp ->
       jit_rex rex reg 0 breg;
       jit_opcodes opcodes;
       jit_modrm 0b01 breg reg;
-      jit_byte disp
+      jit_int8 disp
   | Memory(rm, 1, -1, 0) ->
       jit_rex rex reg 0 rm;
       jit_opcodes opcodes;
@@ -348,30 +142,24 @@ let jit_mod_rm_reg rex opcodes rm reg =
       jit_rex rex reg 0 rm;
       jit_opcodes opcodes;
       jit_modrm 0b01 rm reg;
-      jit_byte disp
+      jit_int8 disp
   | Memory(rm, 1, -1, disp) ->
       jit_rex rex reg 0 rm;
       jit_opcodes opcodes;
       jit_modrm 0b10 rm reg;
-      jit_long disp
-  | Symbol(sym) ->
-      jit_rex rex reg 0 0;
-      jit_opcodes opcodes;
-      jit_modrm 0b00 0b101 reg;
-      jit_reloc (RelocRel32(sym));
-      jit_long 0
+      jit_int32 disp
   | Memory(ireg, scale, (*no breg*)-1, disp) ->
       jit_rex rex reg ireg 0;
       jit_opcodes opcodes;
       jit_modrm 0b00 0b100 reg;
       jit_sib scale ireg 0b101;
-      jit_long disp
+      jit_int32 disp
   | Memory(ireg, scale, (((*%rbp*)5 | (*%r13*)13) as breg), 0) ->
       jit_rex rex reg ireg breg;
       jit_opcodes opcodes;
       jit_modrm 0b01 0b100 reg;
       jit_sib scale ireg breg;
-      jit_byte 0
+      jit_int8 0
   | Memory(ireg, scale, breg, 0) ->
       jit_rex rex reg ireg breg;
       jit_opcodes opcodes;
@@ -382,13 +170,19 @@ let jit_mod_rm_reg rex opcodes rm reg =
       jit_opcodes opcodes;
       jit_modrm 0b01 0b100 reg;
       jit_sib scale ireg breg;
-      jit_byte disp
+      jit_int8 disp
   | Memory(ireg, scale, breg, disp) ->
       jit_rex rex reg ireg breg;
       jit_opcodes opcodes;
       jit_modrm 0b10 0b100 reg;
       jit_sib scale ireg breg;
-      jit_long disp
+      jit_int32 disp
+  | MemoryTag tag ->
+      jit_rex rex reg 0 0;
+      jit_opcodes opcodes;
+      jit_modrm 0b00 0b101 reg;
+      jit_reloc (RelocRel32 tag);
+      jit_int32l (-4l)
   | _ ->
       assert false
 
@@ -396,14 +190,14 @@ let jit_testq src dst =
   match src, dst with
     Immediate n, rm ->
       jit_mod_rm_reg rexw 0xf7 rm 0;
-      jit_long (Nativeint.to_int n)
+      jit_int32 n
   | Register reg, rm ->
       jit_mod_rm_reg rexw 0x85 rm reg
   | _ ->
       assert false
 
 let jit_movss src dst =
-  jit_byte 0xf3;
+  jit_int8 0xf3;
   match src, dst with
     rm, Register reg ->
       jit_mod_rm_reg 0 0x0f10 rm reg
@@ -413,7 +207,7 @@ let jit_movss src dst =
       assert false
 
 let jit_movsd src dst =
-  jit_byte 0xf2;
+  jit_int8 0xf2;
   match src, dst with
     rm, Register reg ->
       jit_mod_rm_reg 0 0x0f10 rm reg
@@ -422,13 +216,16 @@ let jit_movsd src dst =
   | _ ->
       assert false
 
-let jit_sse2 prefix rex opcode src dst =
+let jit_rmreg rex opcode src dst =
   match src, dst with
     rm, Register reg ->
-      jit_byte prefix;
       jit_mod_rm_reg rex opcode rm reg
   | _ ->
       assert false
+
+let jit_sse2 prefix rex opcode src dst =
+  jit_int8 prefix;
+  jit_rmreg rex opcode src dst
 
 let jit_movapd     src dst = jit_sse2 0x66 0 0x0f28 src dst
 let jit_xorpd      src dst = jit_sse2 0x66 0 0x0f57 src dst
@@ -444,12 +241,12 @@ let jit_cvttsd2siq src dst = jit_sse2 0xf2 rexw 0x0f2c src dst
 let jit_comisd     src dst = jit_sse2 0x66 0 0x0f2f src dst
 let jit_ucomisd    src dst = jit_sse2 0x66 0 0x0f2e src dst
 
-let jit_movabsq src dst =
-  match src, dst with
-    Immediate n, Register reg ->
+let jit_movabsq n dst =
+  match dst with
+    Register reg ->
       jit_rex rexw 0 0 reg;
-      jit_byte (0xb8 lor (reg land 7));
-      jit_quad n
+      jit_int8 (0xb8 lor (reg land 7));
+      jit_int64n n
   | _ ->
       assert false
 
@@ -463,7 +260,7 @@ let jit_movb src dst =
 let jit_movw src dst =
   match src, dst with
     Register reg, rm ->
-      jit_byte 0x66;
+      jit_int8 0x66;
       jit_mod_rm_reg rex 0x89 rm reg
   | _ ->
       assert false
@@ -481,7 +278,7 @@ let jit_movq src dst =
   match src, dst with
     Immediate n, ((Memory _ | Register _) as rm) ->
       jit_mod_rm_reg rexw 0xc7 rm 0;
-      jit_long (Nativeint.to_int n)
+      jit_int32 n
   | rm, Register reg ->
       jit_mod_rm_reg rexw 0x8b rm reg
   | Register reg, rm ->
@@ -489,56 +286,21 @@ let jit_movq src dst =
   | _ ->
       assert false
 
-let jit_movsbq src dst =
-  match src, dst with
-    rm, Register reg ->
-      jit_mod_rm_reg rex 0x0fbe rm reg
-  | _ ->
-      assert false
-
-let jit_movswq src dst =
-  match src, dst with
-    rm, Register reg ->
-      jit_mod_rm_reg rexw 0x0fbf rm reg
-  | _ ->
-      assert false
-
-let jit_movslq src dst =
-  match src, dst with
-    rm, Register reg ->
-      jit_mod_rm_reg rexw 0x63 rm reg
-  | _ ->
-      assert false
-
-let jit_movzbq src dst =
-  match src, dst with
-    rm, Register reg ->
-      jit_mod_rm_reg rexw 0x0fb6 rm reg
-  | _ ->
-      assert false
-
-let jit_movzwq src dst =
-  match src, dst with
-    rm, Register reg ->
-      jit_mod_rm_reg rexw 0x0fb7 rm reg
-  | _ ->
-      assert false
-
-let jit_leaq src dst =
-  match src, dst with
-    rm, Register reg ->
-      jit_mod_rm_reg rexw 0x8d rm reg
-  | _ ->
-      assert false
+let jit_movsbq src dst = jit_rmreg rex  0x0fbe src dst
+let jit_movswq src dst = jit_rmreg rexw 0x0fbf src dst
+let jit_movslq src dst = jit_rmreg rexw 0x0063 src dst
+let jit_movzbq src dst = jit_rmreg rexw 0x0fb6 src dst
+let jit_movzwq src dst = jit_rmreg rexw 0x0fb7 src dst
+let jit_leaq   src dst = jit_rmreg rexw 0x008d src dst
 
 let jit_aluq op src dst =
   match src, dst with
-    Immediate n, rm when is_imm8n n ->
+    Immediate n, rm when is_imm8 n ->
       jit_mod_rm_reg rexw 0x83 rm op;
-      jit_byte (Nativeint.to_int n)
+      jit_int8 n
   | Immediate n, rm ->
       jit_mod_rm_reg rexw 0x81 rm op;
-      jit_long (Nativeint.to_int n)
+      jit_int32 n
   | rm, Register reg ->
       jit_mod_rm_reg rexw ((op lsl 3) + 3) rm reg
   | Register reg, rm ->
@@ -555,12 +317,12 @@ let jit_cmpq src dst = jit_aluq 7 src dst
 
 let jit_imulq src dst =
   match src, dst with
-    Immediate n, (Register reg as rm) when is_imm8n n ->
+    Immediate n, (Register reg as rm) when is_imm8 n ->
       jit_mod_rm_reg rexw 0x6b rm reg;
-      jit_byte (Nativeint.to_int n)
+      jit_int8 n
   | Immediate n, (Register reg as rm) ->
       jit_mod_rm_reg rexw 0x69 rm reg;
-      jit_long (Nativeint.to_int n)
+      jit_int32 n
   | rm, Register reg ->
       jit_mod_rm_reg rexw 0x0faf rm reg
   | _ ->
@@ -571,11 +333,11 @@ let jit_idivq dst =
 
 let jit_shfq op src dst =
   match src, dst with
-    Immediate 1n, rm ->
+    Immediate 1, rm ->
       jit_mod_rm_reg rexw 0xd1 rm op
   | Immediate n, rm ->
       jit_mod_rm_reg rexw 0xc1 rm op;
-      jit_byte (Nativeint.to_int n)
+      jit_int8 n
   | (*%cl*)Register 1, rm ->
       jit_mod_rm_reg rexw 0xd3 rm op
   | _ ->
@@ -588,67 +350,67 @@ let jit_sarq src dst = jit_shfq 7 src dst
 let jit_jmpq dst =
   jit_mod_rm_reg 0 0xff dst 4
 
+let jit_jmp_tag tag =
+  jit_int8 0xe9;
+  jit_reloc (RelocRel32 tag);
+  jit_int32l (-4l)
+
 let jit_jmp_label lbl =
-  jit_byte 0xe9;
-  jit_reloc (RelocRel32(jit_label_name lbl));
-  jit_long 0
+  jit_jmp_tag (jit_label_tag lbl)
 
 let jit_jmp_symbol sym =
-  let sym = jit_symbol_name sym in
   (* local symbols don't need indirection *)
-  if List.mem_assoc sym !jit_symbols then begin
+  if is_local_symbol sym then
     (* jmp sym *)
-    jit_byte 0xe9;
-    jit_reloc (RelocRel32 sym);
-    jit_long 0
-  end else begin
+    jit_jmp_tag (jit_symbol_tag sym)
+  else begin
     (* jmpq sym@GOT(%rip) *)
-    let lbl = jit_got_label_for_symbol sym in
-    jit_jmpq (Symbol(jit_label_name lbl))
+    let lbl = jit_external_label_for_symbol sym in
+    jit_jmpq (MemoryTag(jit_label_tag lbl))
   end
 
 let jit_callq dst =
   jit_mod_rm_reg 0 0xff dst 2
 
+let jit_call_tag tag =
+  jit_int8 0xe8;
+  jit_reloc (RelocRel32 tag);
+  jit_int32l (-4l)
+
 let jit_call_label lbl =
-  jit_byte 0xe8;
-  jit_reloc (RelocRel32(jit_label_name lbl));
-  jit_long 0
+  jit_call_tag (jit_label_tag lbl)
 
 let jit_call_symbol sym =
-  let sym = jit_symbol_name sym in
   (* local symbols don't need indirection *)
-  if List.mem_assoc sym !jit_symbols then begin
+  if is_local_symbol sym then
     (* call sym *)
-    jit_byte 0xe8;
-    jit_reloc (RelocRel32 sym);
-    jit_long 0
-  end else begin
+    jit_call_tag (jit_symbol_tag sym)
+  else begin
     (* callq sym@GOT(%rip) *)
-    let lbl = jit_got_label_for_symbol sym in
-    jit_callq (Symbol(jit_label_name lbl))
+    let lbl = jit_external_label_for_symbol sym in
+    jit_callq (MemoryTag(jit_label_tag lbl))
   end
 
-let jit_ret () =
-  jit_byte 0xc3
+let jit_ret() =
+  jit_int8 0xc3
 
 let jit_pushq = function
     Register reg ->
       jit_rex 0 0 0 reg;
-      jit_byte (0x50 + (reg land 0x07))
+      jit_int8 (0x50 + (reg land 0x07))
   | _ ->
       assert false
 
 let jit_popq = function
     Register reg ->
       jit_rex 0 0 0 reg;
-      jit_byte (0x58 + (reg land 0x07))
+      jit_int8 (0x58 + (reg land 0x07))
   | _ ->
       assert false
 
-let jit_cqto () =
-  jit_byte rexw;
-  jit_byte 0x99
+let jit_cqto() =
+  jit_int8 rexw;
+  jit_int8 0x99
 
 (* Condition codes *)
 type cc =
@@ -660,9 +422,9 @@ type cc =
 external int_of_cc: cc -> int = "%identity"
 
 let jit_jcc_label cc lbl =
-  jit_byte 0x0f; jit_byte (0x80 + (int_of_cc cc));
-  jit_reloc (RelocRel32(jit_label_name lbl));
-  jit_long 0
+  jit_int8 0x0f; jit_int8 (0x80 + (int_of_cc cc));
+  jit_reloc (RelocRel32(jit_label_tag lbl));
+  jit_int32l (-4l)
 
 let jit_jb_label   lbl = jit_jcc_label B   lbl
 let jit_jnb_label  lbl = jit_jcc_label NB  lbl
@@ -676,11 +438,7 @@ let jit_jle_label  lbl = jit_jcc_label LE  lbl
 let jit_jnle_label lbl = jit_jcc_label NLE lbl
 
 let jit_cmovcc cc src dst =
-  match src, dst with
-    rm, Register reg ->
-      jit_mod_rm_reg rexw (0x0f40 + (int_of_cc cc)) rm reg
-  | _ ->
-      assert false
+  jit_rmreg rexw (0x0f40 + (int_of_cc cc)) src dst
 
 let jit_cmovs  src dst = jit_cmovcc S src dst
 let jit_cmovns src dst = jit_cmovcc NS src dst
@@ -690,19 +448,15 @@ let jit_setcc cc dst =
 
 (* Generate appropriate code to load the address of sym into dst *)
 let jit_load_symbol_addr sym dst =
-  let sym = jit_symbol_name sym in
   (* local symbols don't need indirection *)
-  if List.mem_assoc sym !jit_symbols then
-    jit_leaq (Symbol sym) dst
+  if is_local_symbol sym then
+    jit_leaq (MemoryTag(jit_symbol_tag sym)) dst
   else begin
     (* GOT magic... well somewhat *)
-    let lbl = jit_got_label_for_symbol sym in
-    jit_movq (Symbol(jit_label_name lbl)) dst
+    let lbl = jit_external_label_for_symbol sym in
+    jit_movq (MemoryTag(jit_label_tag lbl)) dst
   end
  
-
-(* ==== TODO ==== *)
-
 
 (* Tradeoff between code size and code speed *)
 
@@ -712,10 +466,10 @@ let stack_offset = ref 0
 
 (* Layout of the stack frame *)
 
-let frame_required () =
+let frame_required() =
   !contains_calls || num_stack_slots.(0) > 0 || num_stack_slots.(1) > 0
 
-let frame_size () =                     (* includes return address *)
+let frame_size() =                     (* includes return address *)
   if frame_required() then begin
     let sz =
       (!stack_offset + 8 * (num_stack_slots.(0) + num_stack_slots.(1)) + 8)
@@ -732,12 +486,6 @@ let slot_offset loc cl =
       else !stack_offset + (num_stack_slots.(0) + n) * 8
   | Outgoing n -> n
 
-
-(* Output a label *)
-
-let emit_Llabel fallthrough lbl =
-  if not fallthrough && !fastcode_flag then jit_align 4;
-  jit_label lbl
 
 (* Output a pseudo-register *)
 
@@ -815,36 +563,15 @@ let emit_call_gc gc =
   jit_label gc.gc_frame;
   jit_jmp_label gc.gc_return_lbl
 
-(* Record calls to caml_ml_array_bound_error.
-   In -g mode, we maintain one call to caml_ml_array_bound_error
-   per bound check site.  Without -g, we can share a single call. *)
+(* Record calls to caml_ml_array_bound_error. *)
 
-type bound_error_call =
-  { bd_lbl: label;                      (* Entry label *)
-    bd_frame: label }                   (* Label of frame descriptor *)
-
-let bound_error_sites = ref ([] : bound_error_call list)
 let bound_error_call = ref 0
 
 let bound_error_label dbg =
-  if !Clflags.debug then begin
-    let lbl_bound_error = new_label() in
-    let lbl_frame = record_frame_label Reg.Set.empty dbg in
-    bound_error_sites :=
-     { bd_lbl = lbl_bound_error; bd_frame = lbl_frame } :: !bound_error_sites;
-   lbl_bound_error
- end else begin
-   if !bound_error_call = 0 then bound_error_call := new_label();
-   !bound_error_call
- end
+ if !bound_error_call = 0 then bound_error_call := new_label();
+ !bound_error_call
 
-let emit_call_bound_error bd =
-  jit_label bd.bd_lbl;
-  jit_call_symbol "caml_ml_array_bound_error";
-  jit_label bd.bd_frame
-
-let emit_call_bound_errors () =
-  List.iter emit_call_bound_error !bound_error_sites;
+let emit_call_bound_errors() =
   if !bound_error_call > 0 then begin
     jit_label !bound_error_call;
     jit_call_symbol "caml_ml_array_bound_error";
@@ -890,7 +617,7 @@ let cc_for_cond_branch = function
 let output_test_zero arg =
   match arg.loc with
     Reg _ -> jit_testq (emit_reg arg) (emit_reg arg)
-  | _     -> jit_cmpq (Immediate 0n) (emit_reg arg)
+  | _     -> jit_cmpq (Immediate 0) (emit_reg arg)
 
 (* Output a floating-point compare and branch *)
 
@@ -942,10 +669,10 @@ let emit_float_test cmp neg arg lbl =
 
 (* Deallocate the stack frame before a return or tail call *)
 
-let output_epilogue () =
+let output_epilogue() =
   if frame_required() then begin
     let n = frame_size() - 8 in
-    jit_addq (Immediate(Nativeint.of_int n)) rsp
+    jit_addq (Immediate n) rsp
   end
 
 (* Output the assembly code for an instruction *)
@@ -955,11 +682,15 @@ let function_name = ref ""
 (* Entry point for tail recursive calls *)
 let tailrec_entry_point = ref 0
 
-let float_constants = ref ([] : (int * string) list)
+let float_constants = ref ([] : (label * string) list)
+
+(* Labels for caml_absf_mask and caml_negf_mask *)
+let absf_mask_lbl = ref (0 : label)
+let negf_mask_lbl = ref (0 : label)
 
 let emit_instr fallthrough i =
     match i.desc with
-      Lend -> ()
+      Lend ->()
     | Lop(Imove | Ispill | Ireload) ->
         let src = i.arg.(0) and dst = i.res.(0) in
         if src.loc <> dst.loc then begin
@@ -976,9 +707,9 @@ let emit_instr fallthrough i =
         | 0n, Reg _ ->
             jit_xorq (emit_reg i.res.(0)) (emit_reg i.res.(0))
         | n, _ when n <= 0x7FFFFFFFn && n >= -0x80000000n ->
-            jit_movq (Immediate n) (emit_reg i.res.(0))
+            jit_movq (Immediate (Nativeint.to_int n)) (emit_reg i.res.(0))
         | n, _ ->
-            jit_movabsq (Immediate n) (emit_reg i.res.(0))
+            jit_movabsq n (emit_reg i.res.(0))
         end
     | Lop(Iconst_float s) ->
         begin match Int64.bits_of_float (float_of_string s) with
@@ -987,7 +718,7 @@ let emit_instr fallthrough i =
         | _ ->
           let lbl = new_label() in
           float_constants := (lbl, s) :: !float_constants;
-          jit_movsd (Symbol(jit_label_name lbl)) (emit_reg i.res.(0))
+          jit_movsd (MemoryTag(jit_label_tag lbl)) (emit_reg i.res.(0))
         end
     | Lop(Iconst_symbol s) ->
         jit_load_symbol_addr s (emit_reg i.res.(0))
@@ -1016,9 +747,7 @@ let emit_instr fallthrough i =
           jit_call_symbol s
         end
     | Lop(Istackoffset n) ->
-        if n < 0
-        then jit_addq (Immediate(Nativeint.of_int (-n))) rsp
-        else jit_subq (Immediate(Nativeint.of_int n)) rsp;
+        jit_subq (Immediate n) rsp;
         stack_offset := !stack_offset + n
     | Lop(Iload(chunk, addr)) ->
         let dest = i.res.(0) in
@@ -1062,7 +791,7 @@ let emit_instr fallthrough i =
         if !fastcode_flag then begin
           let lbl_redo = new_label() in begin
             jit_label lbl_redo;
-            jit_subq (Immediate (Nativeint.of_int n)) r15
+            jit_subq (Immediate n) r15
           end;
           jit_load_symbol_addr "caml_young_limit" rax;
           jit_cmpq (membase 0 rax) r15;
@@ -1079,7 +808,7 @@ let emit_instr fallthrough i =
             16 -> jit_call_symbol "caml_alloc1";
           | 24 -> jit_call_symbol "caml_alloc2";
           | 32 -> jit_call_symbol "caml_alloc3";
-          | n  -> jit_movq (Immediate (Nativeint.of_int n)) rax;
+          | n  -> jit_movq (Immediate n) rax;
                   jit_call_symbol "caml_allocN";
           end;
           record_frame i.live Debuginfo.none;
@@ -1088,23 +817,23 @@ let emit_instr fallthrough i =
     | Lop(Iintop(Icomp cmp)) ->
         jit_cmpq (emit_reg i.arg.(1)) (emit_reg i.arg.(0));
         let cc = cc_for_cond_branch cmp in
-        jit_setcc cc rax;
-        jit_movzbq rax (emit_reg i.res.(0))
+        jit_setcc cc al;
+        jit_movzbq al (emit_reg i.res.(0))
     | Lop(Iintop_imm(Icomp cmp, n)) ->
-        jit_cmpq (Immediate(Nativeint.of_int n)) (emit_reg i.arg.(0));
+        jit_cmpq (Immediate n) (emit_reg i.arg.(0));
         let cc = cc_for_cond_branch cmp in
-        jit_setcc cc rax;
-        jit_movzbq rax (emit_reg i.res.(0))
+        jit_setcc cc al;
+        jit_movzbq al (emit_reg i.res.(0))
     | Lop(Iintop Icheckbound) ->
         let lbl = bound_error_label i.dbg in
         jit_cmpq (emit_reg i.arg.(1)) (emit_reg i.arg.(0));
         jit_jbe_label lbl
     | Lop(Iintop_imm(Icheckbound, n)) ->
         let lbl = bound_error_label i.dbg in
-        jit_cmpq (Immediate(Nativeint.of_int n)) (emit_reg i.arg.(0));
+        jit_cmpq (Immediate n) (emit_reg i.arg.(0));
         jit_jbe_label lbl
     | Lop(Iintop(Idiv | Imod)) ->
-        jit_cqto ();
+        jit_cqto();
         jit_idivq (emit_reg i.arg.(1))
     | Lop(Iintop(Ilsl | Ilsr | Iasr as op)) ->
         (* We have i.arg.(0) = i.res.(0) and i.arg.(1) = %rcx *)
@@ -1118,25 +847,27 @@ let emit_instr fallthrough i =
         (* Note: i.arg.(0) = i.res.(0) = rdx  (cf. selection.ml) *)
         let l = Misc.log2 n in
         jit_movq (emit_reg i.arg.(0)) rax;
-        jit_addq (Immediate(Nativeint.of_int (n - 1))) (emit_reg i.arg.(0));
+        jit_addq (Immediate (n - 1)) (emit_reg i.arg.(0));
         jit_testq rax rax;
         jit_cmovns rax (emit_reg i.arg.(0));
-        jit_sarq (Immediate(Nativeint.of_int l)) (emit_reg i.res.(0))
+        jit_sarq (Immediate l) (emit_reg i.res.(0))
     | Lop(Iintop_imm(Imod, n)) ->
         (* Note: i.arg.(0) = i.res.(0) = rdx  (cf. selection.ml) *)
         jit_movq (emit_reg i.arg.(0)) rax;
         jit_testq rax rax;
         jit_leaq (membase (n - 1) rax) rax;
         jit_cmovns (emit_reg i.arg.(0)) rax;
-        jit_andq (Immediate(Nativeint.of_int (-n))) rax;
+        jit_andq (Immediate (-n)) rax;
         jit_subq rax (emit_reg i.res.(0))
     | Lop(Iintop_imm(op, n)) ->
         (* We have i.arg.(0) = i.res.(0) *)
-        (instr_for_intop op) (Immediate(Nativeint.of_int n)) (emit_reg i.res.(0))
-    | Lop(Inegf) ->
-        jit_xorpd (Symbol(jit_symbol_name "caml_negf_mask")) (emit_reg i.res.(0))
+        (instr_for_intop op) (Immediate n) (emit_reg i.res.(0))
     | Lop(Iabsf) ->
-        jit_andpd (Symbol(jit_symbol_name "caml_absf_mask")) (emit_reg i.res.(0))
+        if !absf_mask_lbl == 0 then absf_mask_lbl := new_label();
+        jit_andpd (MemoryTag(jit_label_tag !absf_mask_lbl)) (emit_reg i.res.(0))
+    | Lop(Inegf) ->
+        if !negf_mask_lbl == 0 then negf_mask_lbl := new_label();
+        jit_xorpd (MemoryTag(jit_label_tag !negf_mask_lbl)) (emit_reg i.res.(0))
     | Lop(Iaddf | Isubf | Imulf | Idivf as floatop) ->
         (instr_for_floatop floatop) (emit_reg i.arg.(1)) (emit_reg i.res.(0))
     | Lop(Ifloatofint) ->
@@ -1146,20 +877,21 @@ let emit_instr fallthrough i =
     | Lop(Ispecific(Ilea addr)) ->
         jit_leaq (emit_addressing addr i.arg 0) (emit_reg i.res.(0))
     | Lop(Ispecific(Istore_int(n, addr))) ->
-        jit_movq (Immediate n) (emit_addressing addr i.arg 0)
+        jit_movq (Immediate (Nativeint.to_int n)) (emit_addressing addr i.arg 0)
     | Lop(Ispecific(Istore_symbol(s, addr))) ->
         assert false
     | Lop(Ispecific(Ioffset_loc(n, addr))) ->
-        jit_addq (Immediate(Nativeint.of_int n)) (emit_addressing addr i.arg 0)
+        jit_addq (Immediate n) (emit_addressing addr i.arg 0)
     | Lop(Ispecific(Ifloatarithmem(op, addr))) ->
         (instr_for_floatarithmem op) (emit_addressing addr i.arg 1) (emit_reg i.res.(0))
     | Lreloadretaddr ->
         ()
     | Lreturn ->
         output_epilogue();
-        jit_ret ()
+        jit_ret()
     | Llabel lbl ->
-        emit_Llabel fallthrough lbl
+        if not fallthrough && !fastcode_flag then jit_align 0x90 16;
+        jit_label lbl
     | Lbranch lbl ->
         jit_jmp_label lbl
     | Lcondbranch(tst, lbl) ->
@@ -1180,20 +912,20 @@ let emit_instr fallthrough i =
             let cc = cc_for_cond_branch cmp in
             jit_jcc_label cc lbl
         | Iinttest_imm(cmp, n) ->
-            jit_cmpq (Immediate(Nativeint.of_int n)) (emit_reg i.arg.(0));
+            jit_cmpq (Immediate n) (emit_reg i.arg.(0));
             let cc = cc_for_cond_branch cmp in
             jit_jcc_label cc lbl
         | Ifloattest(cmp, neg) ->
             emit_float_test cmp neg i.arg lbl
         | Ioddtest ->
-            jit_testq (Immediate 1n) (emit_reg i.arg.(0));
+            jit_testq (Immediate 1) (emit_reg i.arg.(0));
             jit_jnz_label lbl
         | Ieventest ->
-            jit_testq (Immediate 1n) (emit_reg i.arg.(0));
+            jit_testq (Immediate 1) (emit_reg i.arg.(0));
             jit_jz_label lbl
         end
     | Lcondbranch3(lbl0, lbl1, lbl2) ->
-            jit_cmpq (Immediate 1n) (emit_reg i.arg.(0));
+            jit_cmpq (Immediate 1) (emit_reg i.arg.(0));
             begin match lbl0 with
               None -> ()
             | Some lbl -> jit_jb_label lbl
@@ -1215,17 +947,21 @@ let emit_instr fallthrough i =
            we must be careful not to clobber it before use. *)
         let (tmp1, tmp2) =
           if i.arg.(0).loc = Reg 0 (* rax *)
-          then (phys_reg 4 (*rdx*), phys_reg 0 (*rax*))
-          else (phys_reg 0 (*rax*), phys_reg 4 (*rdx*)) in
-        jit_leaq (Symbol(jit_label_name lbl)) (emit_reg tmp1);
-        jit_movslq (memindex 0 (emit_reg tmp1) (emit_reg i.arg.(0)) 4) (emit_reg tmp2);
-        jit_addq (emit_reg tmp2) (emit_reg tmp1);
-        jit_jmpq (emit_reg tmp1);
-        jit_align 4;
+          then (rdx, rax)
+          else (rax, rdx) in
+        jit_leaq (MemoryTag(jit_label_tag lbl)) tmp1;
+        jit_movslq (memindex 0 tmp1 (emit_reg i.arg.(0)) 4) tmp2;
+        jit_addq tmp2 tmp1;
+        jit_jmpq tmp1;
+        jit_data();
+        jit_align 0 4;
         jit_label lbl;
         for i = 0 to Array.length jumptbl - 1 do
-          jit_reloc_diff32 jumptbl.(i) lbl 0
-        done
+          (* .long jumptbl.(i) - lbl *)
+          jit_reloc (RelocRel32(jit_label_tag jumptbl.(i)));
+          jit_int32 (4 * i)
+        done;
+        jit_text()
     | Lsetuptrap lbl ->
         jit_call_label lbl
     | Lpushtrap ->
@@ -1234,17 +970,12 @@ let emit_instr fallthrough i =
         stack_offset := !stack_offset + 16
     | Lpoptrap ->
         jit_popq r14;
-        jit_addq (Immediate 8n) rsp;
+        jit_addq (Immediate 8) rsp;
         stack_offset := !stack_offset - 16
     | Lraise ->
-        if !Clflags.debug then begin
-          jit_call_symbol "caml_raise_exn";
-          record_frame Reg.Set.empty i.dbg
-        end else begin
-          jit_movq r14 rsp;
-          jit_popq r14;
-          jit_ret ()
-        end
+        jit_movq r14 rsp;
+        jit_popq r14;
+        jit_ret()
 
 let rec emit_all fallthrough i =
   match i.desc with
@@ -1257,7 +988,7 @@ let rec emit_all fallthrough i =
 
 let emit_float_constant (lbl, cst) =
   jit_label lbl;
-  jit_quad (Int64.to_nativeint (Int64.bits_of_float (float_of_string cst)))
+  jit_int64L (Int64.bits_of_float (float_of_string cst))
 
 (* Emission of a function declaration *)
 
@@ -1266,98 +997,52 @@ let fundecl fundecl =
   fastcode_flag := fundecl.fun_fast;
   tailrec_entry_point := new_label();
   stack_offset := 0;
-  float_constants := [];
   call_gc_sites := [];
-  bound_error_sites := [];
   bound_error_call := 0;
-  jit_text ();
-  jit_align 16;
-  if macosx
-  && not !Clflags.output_c_object
-  && is_generic_function fundecl.fun_name
-  then (* PR#4690 *)
-    jit_symbol fundecl.fun_name
-  else
-    jit_symbol_globl fundecl.fun_name;
+  jit_text();
+  jit_align 0 16;
+  jit_global fundecl.fun_name;
+  jit_symbol fundecl.fun_name;
   if frame_required() then begin
     let n = frame_size() - 8 in
-    jit_subq (Immediate(Nativeint.of_int n)) rsp
+    jit_subq (Immediate n) rsp
   end;
   jit_label !tailrec_entry_point;
   emit_all true fundecl.fun_body;
   List.iter emit_call_gc !call_gc_sites;
-  emit_call_bound_errors ();
-  if !float_constants <> [] then
-    List.iter emit_float_constant !float_constants
+  emit_call_bound_errors()
 
 (* Emission of data *)
 
-let emit_item = function
-    Cglobal_symbol s ->
-      jit_globl s
-  | Cdefine_symbol s ->
-      jit_symbol s
-  | Cdefine_label lbl ->
-      jit_label (100000 + lbl)
-  | Cint8 n ->
-      jit_byte n
-  | Cint16 n ->
-      jit_word n
-  | Cint32 n ->
-      jit_long (Nativeint.to_int n)
-  | Cint n ->
-      jit_quad n
-  | Csingle f ->
-      jit_long (Int32.to_int (Int32.bits_of_float (float_of_string f)))
-  | Cdouble f ->
-      jit_quad (Int64.to_nativeint (Int64.bits_of_float (float_of_string f)))
-  | Csymbol_address s ->
-      jit_reloc_abs64 (jit_symbol_name s)
-  | Clabel_address lbl ->
-      jit_reloc_abs64 (jit_label_name (100000 + lbl))
-  | Cstring s ->
-      jit_ascii s
-  | Cskip n ->
-      jit_skip n
-  | Calign n ->
-      jit_align n
-
-let data l =
-  jit_data();
-  List.iter emit_item l
+let data = Jitaux.data
 
 (* Beginning / end of an assembly file *)
 
 let begin_assembly() =
-  jit_reset();
-  jit_data();
-  jit_symbol_globl (Compilenv.make_symbol (Some "data_begin"));
-  jit_text();
-  jit_symbol_globl (Compilenv.make_symbol (Some "code_begin"))
+  externals := [];
+  float_constants := [];
+  absf_mask_lbl := 0;
+  negf_mask_lbl := 0;
+  Jitaux.begin_assembly()
 
 let end_assembly() =
-  (* from amd64.S; could emit these constants on demand *)
-  jit_align 16;
-  jit_symbol "caml_negf_mask";
-  jit_quad 0x8000000000000000n; jit_quad 0x0000000000000000n;
-  jit_symbol "caml_absf_mask";
-  jit_quad 0x7FFFFFFFFFFFFFFFn; jit_quad 0xFFFFFFFFFFFFFFFFn;
-  jit_data ();
-  jit_symbol_globl (Compilenv.make_symbol (Some "data_end"));
-  jit_text ();
-  jit_symbol_globl (Compilenv.make_symbol (Some "code_end"));
-  jit_long 0;
-  jit_symbol_globl (Compilenv.make_symbol (Some "frametable"));
-  emit_frames
-    { efa_label = (fun lbl -> jit_reloc_abs64 (jit_label_name lbl));
-      efa_16 = jit_word;
-      efa_32 = (fun n -> jit_long (Int32.to_int n));
-      efa_word = (fun n -> jit_quad (Nativeint.of_int n));
-      efa_align = jit_align;
-      efa_label_rel = (fun lbl ofs ->
-                         let lbl' = new_label () in
-                         jit_label lbl';
-                         jit_reloc_diff32 lbl lbl' (Int32.to_int ofs));
-      efa_def_label = jit_label;
-      efa_string = jit_asciz };
-  jit_finalize ()
+  jit_data();
+  jit_align 0 16;
+  (* from amd64.S; emit these constants on demand *)
+  if !absf_mask_lbl != 0 then begin
+    jit_label !absf_mask_lbl;
+    jit_int64L 0x7FFFFFFFFFFFFFFFL; jit_int64L 0xFFFFFFFFFFFFFFFFL
+  end;
+  if !negf_mask_lbl != 0 then begin
+    jit_label !negf_mask_lbl;
+    jit_int64L 0x8000000000000000L; jit_int64L 0x0000000000000000L
+  end;
+  (* Output the external address table *)
+  List.iter (fun (sym, lbl) ->
+               jit_label lbl;
+               jit_reloc (RelocAbs64(jit_symbol_tag sym));
+               jit_int64L 0L) !externals;
+  (* Emit floating point constants *)
+  List.iter emit_float_constant !float_constants;
+  Jitaux.end_assembly()
+
