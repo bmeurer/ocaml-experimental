@@ -175,6 +175,9 @@ let jit_testl src dst =
     Immediate n, Register (*%eax*)0 when is_imm8n n ->
       jit_int8 0xa8;
       jit_int8n n
+  | Immediate n, (Register reg as rm) when is_imm8n n && reg < 4 ->
+      jit_mod_rm_reg 0xf6 rm 0;
+      jit_int8n n
   | Immediate n, Register (*%eax*)0 ->
       jit_int8 0xa9;
       jit_int32n n
