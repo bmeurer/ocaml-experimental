@@ -188,7 +188,14 @@ let jit_mod_rm_reg rex opcodes rm reg =
 
 let jit_testq src dst =
   match src, dst with
-    Immediate n, rm ->
+    Immediate n, Register (*%rax*)0 when is_imm8 n ->
+      jit_int8 0xa8;
+      jit_int8 n
+  | Immediate n, Register (*%rax*)0 ->
+      jit_int8 rexw;
+      jit_int8 0xa9;
+      jit_int32 n
+  | Immediate n, rm ->
       jit_mod_rm_reg rexw 0xf7 rm 0;
       jit_int32 n
   | Register reg, rm ->
