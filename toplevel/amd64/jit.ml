@@ -305,6 +305,10 @@ let jit_aluq op src dst =
     Immediate n, rm when is_imm8 n ->
       jit_mod_rm_reg rexw 0x83 rm op;
       jit_int8 n
+  | Immediate n, Register (*%rax*)0 ->
+      jit_int8 rexw;
+      jit_int8 ((op lsl 3) + 5);
+      jit_int32 n
   | Immediate n, rm ->
       jit_mod_rm_reg rexw 0x81 rm op;
       jit_int32 n
