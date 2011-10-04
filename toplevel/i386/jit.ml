@@ -172,7 +172,13 @@ let jit_mod_rm_reg opcodes rm reg =
 
 let jit_testl src dst =
   match src, dst with
-    Immediate n, rm ->
+    Immediate n, Register (*%eax*)0 when is_imm8n n ->
+      jit_int8 0xa8;
+      jit_int8n n
+  | Immediate n, Register (*%eax*)0 ->
+      jit_int8 0xa9;
+      jit_int32n n
+  | Immediate n, rm ->
       jit_mod_rm_reg 0xf7 rm 0;
       jit_int32n n
   | Register reg, rm ->
