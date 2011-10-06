@@ -172,7 +172,16 @@ let jit_mod_rm_reg opcodes rm reg =
 
 let jit_testl src dst =
   match src, dst with
-    Immediate n, rm ->
+    Immediate n, Register (*%eax*)0 when is_imm8n n ->
+      jit_int8 0xa8;
+      jit_int8n n
+  | Immediate n, (Register reg as rm) when is_imm8n n && reg < 4 ->
+      jit_mod_rm_reg 0xf6 rm 0;
+      jit_int8n n
+  | Immediate n, Register (*%eax*)0 ->
+      jit_int8 0xa9;
+      jit_int32n n
+  | Immediate n, rm ->
       jit_mod_rm_reg 0xf7 rm 0;
       jit_int32n n
   | Register reg, rm ->
@@ -231,7 +240,10 @@ let jit_leal   src dst = jit_rmreg 0x008d src dst
 
 let jit_alub op src dst =
   match src, dst with
-    Immediate n, rm ->
+    Immediate n, Register (*%eax*)0 ->
+      jit_int8 ((op lsl 3) + 4);
+      jit_int8n n
+  | Immediate n, rm ->
       jit_mod_rm_reg 0x80 rm op;
       jit_int8n n
   | _ ->
@@ -247,6 +259,9 @@ let jit_alul op src dst =
     Immediate n, rm when is_imm8n n ->
       jit_mod_rm_reg 0x83 rm op;
       jit_int8n n
+  | Immediate n, Register (*%eax*)0 ->
+      jit_int8 ((op lsl 3) + 5);
+      jit_int32n n
   | Immediate n, rm ->
       jit_mod_rm_reg 0x81 rm op;
       jit_int32n n
