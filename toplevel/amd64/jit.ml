@@ -181,14 +181,26 @@ let jit_mod_rm_reg rex opcodes rm reg =
       jit_rex rex reg 0 0;
       jit_opcodes opcodes;
       jit_modrm 0b00 0b101 reg;
-      jit_reloc (RelocRel tag);
+      jit_reloc (RelocRel32 tag);
       jit_int32l (-4l)
   | _ ->
       assert false
 
 let jit_testq src dst =
   match src, dst with
-    Immediate n, rm ->
+    Immediate n, Register (*%rax*)0 when is_imm8 n ->
+      jit_int8 0xa8;
+      jit_int8 n
+  | Immediate n, (Register reg as rm) when is_imm8 n ->
+      (* Add REX prefix for %spl, %bpl, %sil and %dil *)
+      let rex = if reg >= 4 && reg < 8 then rex else 0 in
+      jit_mod_rm_reg rex 0xf6 rm 0;
+      jit_int8 n
+  | Immediate n, Register (*%rax*)0 ->
+      jit_int8 rexw;
+      jit_int8 0xa9;
+      jit_int32 n
+  | Immediate n, rm ->
       jit_mod_rm_reg rexw 0xf7 rm 0;
       jit_int32 n
   | Register reg, rm ->
@@ -298,6 +310,10 @@ let jit_aluq op src dst =
     Immediate n, rm when is_imm8 n ->
       jit_mod_rm_reg rexw 0x83 rm op;
       jit_int8 n
+  | Immediate n, Register (*%rax*)0 ->
+      jit_int8 rexw;
+      jit_int8 ((op lsl 3) + 5);
+      jit_int32 n
   | Immediate n, rm ->
       jit_mod_rm_reg rexw 0x81 rm op;
       jit_int32 n
@@ -352,7 +368,7 @@ let jit_jmpq dst =
 
 let jit_jmp_tag tag =
   jit_int8 0xe9;
-  jit_reloc (RelocRel tag);
+  jit_reloc (RelocRel32 tag);
   jit_int32l (-4l)
 
 let jit_jmp_label lbl =
@@ -374,7 +390,7 @@ let jit_callq dst =
 
 let jit_call_tag tag =
   jit_int8 0xe8;
-  jit_reloc (RelocRel tag);
+  jit_reloc (RelocRel32 tag);
   jit_int32l (-4l)
 
 let jit_call_label lbl =
@@ -423,7 +439,7 @@ external int_of_cc: cc -> int = "%identity"
 
 let jit_jcc_label cc lbl =
   jit_int8 0x0f; jit_int8 (0x80 + (int_of_cc cc));
-  jit_reloc (RelocRel(jit_label_tag lbl));
+  jit_reloc (RelocRel32(jit_label_tag lbl));
   jit_int32l (-4l)
 
 let jit_jb_label   lbl = jit_jcc_label B   lbl
@@ -563,36 +579,15 @@ let emit_call_gc gc =
   jit_label gc.gc_frame;
   jit_jmp_label gc.gc_return_lbl
 
-(* Record calls to caml_ml_array_bound_error.
-   In -g mode, we maintain one call to caml_ml_array_bound_error
-   per bound check site.  Without -g, we can share a single call. *)
+(* Record calls to caml_ml_array_bound_error. *)
 
-type bound_error_call =
-  { bd_lbl: label;                      (* Entry label *)
-    bd_frame: label }                   (* Label of frame descriptor *)
-
-let bound_error_sites = ref ([] : bound_error_call list)
 let bound_error_call = ref 0
 
 let bound_error_label dbg =
-  if !Clflags.debug then begin
-    let lbl_bound_error = new_label() in
-    let lbl_frame = record_frame_label Reg.Set.empty dbg in
-    bound_error_sites :=
-     { bd_lbl = lbl_bound_error; bd_frame = lbl_frame } :: !bound_error_sites;
-   lbl_bound_error
- end else begin
-   if !bound_error_call = 0 then bound_error_call := new_label();
-   !bound_error_call
- end
-
-let emit_call_bound_error bd =
-  jit_label bd.bd_lbl;
-  jit_call_symbol "caml_ml_array_bound_error";
-  jit_label bd.bd_frame
+ if !bound_error_call = 0 then bound_error_call := new_label();
+ !bound_error_call
 
 let emit_call_bound_errors() =
-  List.iter emit_call_bound_error !bound_error_sites;
   if !bound_error_call > 0 then begin
     jit_label !bound_error_call;
     jit_call_symbol "caml_ml_array_bound_error";
@@ -703,7 +698,11 @@ let function_name = ref ""
 (* Entry point for tail recursive calls *)
 let tailrec_entry_point = ref 0
 
-let float_constants = ref ([] : (int * string) list)
+let float_constants = ref ([] : (label * string) list)
+
+(* Labels for caml_absf_mask and caml_negf_mask *)
+let absf_mask_lbl = ref (0 : label)
+let negf_mask_lbl = ref (0 : label)
 
 let emit_instr fallthrough i =
     match i.desc with
@@ -764,9 +763,7 @@ let emit_instr fallthrough i =
           jit_call_symbol s
         end
     | Lop(Istackoffset n) ->
-        if n < 0
-        then jit_addq (Immediate (-n)) rsp
-        else jit_subq (Immediate n) rsp;
+        jit_subq (Immediate n) rsp;
         stack_offset := !stack_offset + n
     | Lop(Iload(chunk, addr)) ->
         let dest = i.res.(0) in
@@ -881,10 +878,12 @@ let emit_instr fallthrough i =
     | Lop(Iintop_imm(op, n)) ->
         (* We have i.arg.(0) = i.res.(0) *)
         (instr_for_intop op) (Immediate n) (emit_reg i.res.(0))
-    | Lop(Inegf) ->
-        jit_xorpd (MemoryTag(jit_symbol_tag "caml_negf_mask")) (emit_reg i.res.(0))
     | Lop(Iabsf) ->
-        jit_andpd (MemoryTag(jit_symbol_tag "caml_absf_mask")) (emit_reg i.res.(0))
+        if !absf_mask_lbl == 0 then absf_mask_lbl := new_label();
+        jit_andpd (MemoryTag(jit_label_tag !absf_mask_lbl)) (emit_reg i.res.(0))
+    | Lop(Inegf) ->
+        if !negf_mask_lbl == 0 then negf_mask_lbl := new_label();
+        jit_xorpd (MemoryTag(jit_label_tag !negf_mask_lbl)) (emit_reg i.res.(0))
     | Lop(Iaddf | Isubf | Imulf | Idivf as floatop) ->
         (instr_for_floatop floatop) (emit_reg i.arg.(1)) (emit_reg i.res.(0))
     | Lop(Ifloatofint) ->
@@ -975,7 +974,7 @@ let emit_instr fallthrough i =
         jit_label lbl;
         for i = 0 to Array.length jumptbl - 1 do
           (* .long jumptbl.(i) - lbl *)
-          jit_reloc (RelocRel(jit_label_tag jumptbl.(i)));
+          jit_reloc (RelocRel32(jit_label_tag jumptbl.(i)));
           jit_int32 (4 * i)
         done;
         jit_text()
@@ -1015,7 +1014,6 @@ let fundecl fundecl =
   tailrec_entry_point := new_label();
   stack_offset := 0;
   call_gc_sites := [];
-  bound_error_sites := [];
   bound_error_call := 0;
   jit_text();
   jit_align 0 16;
@@ -1039,20 +1037,26 @@ let data = Jitaux.data
 let begin_assembly() =
   externals := [];
   float_constants := [];
+  absf_mask_lbl := 0;
+  negf_mask_lbl := 0;
   Jitaux.begin_assembly()
 
 let end_assembly() =
   jit_data();
-  (* from amd64.S; could emit these constants on demand *)
   jit_align 0 16;
-  jit_symbol "caml_negf_mask";
-  jit_int64L 0x8000000000000000L; jit_int64L 0x0000000000000000L;
-  jit_symbol "caml_absf_mask";
-  jit_int64L 0x7FFFFFFFFFFFFFFFL; jit_int64L 0xFFFFFFFFFFFFFFFFL;
+  (* from amd64.S; emit these constants on demand *)
+  if !absf_mask_lbl != 0 then begin
+    jit_label !absf_mask_lbl;
+    jit_int64L 0x7FFFFFFFFFFFFFFFL; jit_int64L 0xFFFFFFFFFFFFFFFFL
+  end;
+  if !negf_mask_lbl != 0 then begin
+    jit_label !negf_mask_lbl;
+    jit_int64L 0x8000000000000000L; jit_int64L 0x0000000000000000L
+  end;
   (* Output the external address table *)
   List.iter (fun (sym, lbl) ->
                jit_label lbl;
-               jit_reloc (RelocAbs(jit_symbol_tag sym));
+               jit_reloc (RelocAbs64(jit_symbol_tag sym));
                jit_int64L 0L) !externals;
   (* Emit floating point constants *)
   List.iter emit_float_constant !float_constants;
