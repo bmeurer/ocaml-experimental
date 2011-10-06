@@ -188,7 +188,19 @@ let jit_mod_rm_reg rex opcodes rm reg =
 
 let jit_testq src dst =
   match src, dst with
-    Immediate n, rm ->
+    Immediate n, Register (*%rax*)0 when is_imm8 n ->
+      jit_int8 0xa8;
+      jit_int8 n
+  | Immediate n, (Register reg as rm) when is_imm8 n ->
+      (* Add REX prefix for %spl, %bpl, %sil and %dil *)
+      let rex = if reg >= 4 && reg < 8 then rex else 0 in
+      jit_mod_rm_reg rex 0xf6 rm 0;
+      jit_int8 n
+  | Immediate n, Register (*%rax*)0 ->
+      jit_int8 rexw;
+      jit_int8 0xa9;
+      jit_int32 n
+  | Immediate n, rm ->
       jit_mod_rm_reg rexw 0xf7 rm 0;
       jit_int32 n
   | Register reg, rm ->
@@ -298,6 +310,10 @@ let jit_aluq op src dst =
     Immediate n, rm when is_imm8 n ->
       jit_mod_rm_reg rexw 0x83 rm op;
       jit_int8 n
+  | Immediate n, Register (*%rax*)0 ->
+      jit_int8 rexw;
+      jit_int8 ((op lsl 3) + 5);
+      jit_int32 n
   | Immediate n, rm ->
       jit_mod_rm_reg rexw 0x81 rm op;
       jit_int32 n
