@@ -14,12 +14,9 @@
 
 /* JIT support for the native toplevel */
 
-#include <sys/types.h>
-#include <sys/mman.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include "misc.h"
 #include "mlvalues.h"
 #include "memory.h"
@@ -83,7 +80,7 @@ CAMLprim value caml_natjit_malloc(value text_size, value data_size)
   char *area, *text, *data;
 
   /* Memory allocation tries to reuse already allocated memory,
-   * which works in many cases. For 64bit architectures we ensure
+   * which works in many cases. For the amd64 case we ensure
    * that all data memory is within 32bit range from the text
    * memory allocated.
    */
@@ -95,24 +92,21 @@ CAMLprim value caml_natjit_malloc(value text_size, value data_size)
       break;
     }
 
-    psize = getpagesize();
+    psize = caml_getpagesize();
     if (dsize < data_end - data_ptr){
       /* Need new text area */
       size = 2 * ALIGN(tsize, psize);
-      area = (char *)mmap(NULL, size,
-                          PROT_EXEC | PROT_READ | PROT_WRITE,
-                          MAP_ANON | MAP_PRIVATE, -1, 0);
-      if (area == (char *)MAP_FAILED) caml_raise_out_of_memory();
+      area = caml_mmap_rwx(size);
+      if (area == NULL) caml_raise_out_of_memory();
       text_ptr = area;
       text_end = area + size;
     }
     else if (tsize < text_end - text_ptr){
       /* Need new data area */
       size = 2 * ALIGN(dsize, psize);
-      area = (char *)mmap(NULL, size,
-                          PROT_READ | PROT_WRITE,
-                          MAP_ANON | MAP_PRIVATE, -1, 0);
-      if (area == (char *)MAP_FAILED) caml_raise_out_of_memory();
+      area = caml_mmap_rwx(size);
+      if (area == NULL) caml_raise_out_of_memory();
+      caml_mprotect_rw(area, size);
       data_ptr = area;
       data_end = area + size;
     }
@@ -121,22 +115,20 @@ CAMLprim value caml_natjit_malloc(value text_size, value data_size)
       mlsize_t tsize_aligned = 2 * ALIGN(tsize, psize);
       mlsize_t dsize_aligned = 2 * ALIGN(dsize, psize);
       size = tsize_aligned + dsize_aligned;
-      area = (char *)mmap(NULL, size,
-                          PROT_EXEC | PROT_READ | PROT_WRITE,
-                          MAP_ANON | MAP_PRIVATE, -1, 0);
-      if (area == (char *)MAP_FAILED) caml_raise_out_of_memory();
-      mprotect(area + tsize_aligned, dsize_aligned, PROT_READ | PROT_WRITE);
+      area = (char *)caml_mmap_rwx(size);
+      if (area == NULL) caml_raise_out_of_memory();
+      caml_mprotect_rw(area + tsize_aligned, dsize_aligned);
       text_ptr = area;
       text_end = text_ptr + tsize_aligned;
       data_ptr = text_end;
       data_end = data_ptr + dsize_aligned;
     }
 
-#ifdef ARCH_SIXTYFOUR
+#ifdef TARGET_amd64
     if (ABS(text_end - data_ptr) >= 2147483647
         || ABS(data_end - text_ptr) >= 2147483647){
       /* Out of 32bit addressing range, try again... */
-      munmap(area, size);
+      caml_munmap(area, size);
       text_ptr = text_end = NULL;
       data_ptr = data_end = NULL;
     }
