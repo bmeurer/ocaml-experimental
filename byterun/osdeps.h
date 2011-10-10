@@ -71,4 +71,17 @@ extern int caml_read_directory(char * dirname, struct ext_table * contents);
 extern int caml_executable_name(char * name, int name_len);
 #endif
 
+/* Return the system page size as the number of bytes in a page. */
+extern int caml_getpagesize(void);
+
+/* Allocates memory pages with read, write and execute permission of the
+   requested [size]. Returns [NULL] on error. */
+extern void * caml_mmap_rwx(mlsize_t size);
+
+/* Releases previously allocated memory pages. */
+extern void caml_unmap(void * addr, mlsize_t size);
+
+/* Changes the protection of the pages to read and write. */
+extern void caml_mprotect_rw(void *addr, mlsize_t size);
+
 #endif /* CAML_OSDEPS_H */
