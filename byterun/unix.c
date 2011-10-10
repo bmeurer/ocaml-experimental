@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include "config.h"
@@ -342,3 +343,37 @@ int caml_executable_name(char * name, int name_len)
 }
 
 #endif
+
+/* Return the system page size as the number of bytes in a page. */
+
+int caml_getpagesize(void)
+{
+  return getpagesize();
+}
+
+/* Allocates memory pages with read, write and execute permission of the
+   requested [size]. Returns [NULL] on error. */
+
+void *caml_mmap_rwx(mlsize_t size)
+{
+  void *addr = mmap(NULL, size,
+                    PROT_EXEC | PROT_READ | PROT_WRITE,
+                    MAP_ANON | MAP_PRIVATE, -1, 0);
+  if (addr == MAP_FAILED)
+    return NULL;
+  return addr;
+}
+
+/* Releases previously allocated memory pages. */
+
+void caml_munmap(void *addr, mlsize_t size)
+{
+  munmap(addr, size);
+}
+
+/* Changes the protection of the pages to read and write. */
+
+void caml_mprotect_rw(void *addr, mlsize_t size)
+{
+  mprotect(addr, size, PROT_READ | PROT_WRITE);
+}
