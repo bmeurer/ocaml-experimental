@@ -261,6 +261,10 @@ installopt:
 	if test -f lex/ocamllex.opt; \
 	  then cp lex/ocamllex.opt $(BINDIR)/ocamllex.opt.exe; else :; fi
 
+# Installation of the native toplevel
+installnat:
+	cp ocamlnat $(BINDIR)/ocamlnat.exe
+
 clean:: partialclean
 
 # The compiler
@@ -301,7 +305,8 @@ partialclean::
 # The native toplevel
 
 ocamlnat: ocamlopt otherlibs/dynlink/dynlink.cmxa $(NATTOPOBJS:.cmo=.cmx)
-	$(CAMLOPT) $(LINKFLAGS) otherlibs/dynlink/dynlink.cmxa -o ocamlnat $(NATTOPOBJS:.cmo=.cmx) -linkall
+	$(CAMLOPT) $(LINKFLAGS) otherlibs/dynlink/dynlink.cmxa -o ocamlnat \
+	           $(NATTOPOBJS:.cmo=.cmx) asmrun/natjit.$(O) -linkall
 
 toplevel/opttoploop.cmx: otherlibs/dynlink/dynlink.cmxa
 
