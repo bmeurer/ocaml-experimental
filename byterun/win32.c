@@ -157,6 +157,40 @@ char * caml_dlerror(void)
   return flexdll_dlerror();
 }
 
+/* Return the system page size as the number of bytes in a page. */
+
+int caml_getpagesize(void)
+{
+  SYSTEM_INFO systemInfo;
+  GetSystemInfo(&systemInfo);
+  return systemInfo.dwPageSize;
+}
+
+/* Allocates memory pages with read, write and execute permission of the
+   requested [size]. Returns [NULL] on error. */
+
+void *caml_mmap_rwx(mlsize_t size)
+{
+  return VirtualAlloc(NULL, size,
+                      MEM_COMMIT | MEM_RESERVE,
+                      PAGE_EXECUTE_READWRITE);
+}
+
+/* Releases previously allocated memory pages. */
+
+void caml_munmap(void *addr, mlsize_t size)
+{
+  VirtualFree(addr, size, MEM_RELEASE);
+}
+
+/* Changes the protection of the pages to read and write. */
+
+void caml_mprotect_rw(void *addr, mlsize_t size)
+{
+  DWORD oldProtect = 0;
+  VirtualProtect(addr, size, PAGE_READWRITE, &oldProtect);
+}
+
 /* Proper emulation of signal(), including ctrl-C and ctrl-break */
 
 typedef void (*sighandler)(int sig);
