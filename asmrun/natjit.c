@@ -33,6 +33,11 @@
 # define D(fmt, ...) do {} while (0)
 #endif
 
+#ifdef _MSC_VER
+typedef signed __int16   int16_t;
+typedef unsigned __int16 uint16_t;
+#endif
+
 CAMLprim value caml_natjit_getint16(value str, value ofs)
 {
   return Val_long(*(const int16_t *)(String_val(str) + Long_val(ofs)));
