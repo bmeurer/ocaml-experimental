@@ -137,6 +137,11 @@ void * caml_dlopen(char * libname, int for_execution, int global)
   return handle;
 }
 
+void * caml_rtld_default(void)
+{
+  return flexdll_dlopen(NULL, 0);
+}
+
 void caml_dlclose(void * handle)
 {
   flexdll_dlclose(handle);
