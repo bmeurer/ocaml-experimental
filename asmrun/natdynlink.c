@@ -17,7 +17,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef HAS_UNISTD_H
 #include <unistd.h>
+#endif
 #include "misc.h"
 #include "mlvalues.h"
 #include "memory.h"
