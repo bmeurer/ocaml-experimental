@@ -100,6 +100,7 @@ TOPLIB=$(UTILS) $(PARSING) $(TYPING) $(COMP) $(BYTECOMP) $(TOPLEVEL)
 TOPOBJS=$(TOPLEVELLIB) $(TOPLEVELSTART)
 
 NATTOPOBJS=$(OPTUTILS) $(PARSING) $(TYPING) $(COMP) $(ASMCOMP) \
+  toplevel/jitaux.cmo toplevel/jit.cmo \
   driver/pparse.cmo driver/opterrors.cmo driver/optcompile.cmo \
   driver/main_args.cmo \
   toplevel/genprintval.cmo toplevel/opttoploop.cmo toplevel/opttopdirs.cmo \
@@ -485,6 +486,14 @@ partialclean::
 	rm -f asmcomp/scheduling.ml
 
 beforedepend:: asmcomp/scheduling.ml
+
+toplevel/jit.ml: toplevel/$(ARCH)/jit.ml
+	cp toplevel/$(ARCH)/jit.ml toplevel/jit.ml
+
+partialclean::
+	rm -f toplevel/jit.ml
+
+beforedepend:: toplevel/jit.ml
 
 # Preprocess the code emitters
 
