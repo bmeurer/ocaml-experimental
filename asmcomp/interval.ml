@@ -77,13 +77,14 @@ let update_interval_position intervals pos kind reg =
   let off = on + 1 in
   let rbegin = (match kind with Result -> off | _ -> on) in
   let rend = (match kind with Argument -> on | _ -> off) in
-  if i.iend == 0 then begin
-    i.ibegin <- off;
+  if i.iend = 0 then begin
+    i.ibegin <- rbegin;
     i.reg <- reg;
     i.ranges <- [{rbegin = rbegin; rend = rend}]
   end else begin
     let r = List.hd i.ranges in
-    if r.rend == on - 1 || r.rend == on - 2 then
+    let ridx = r.rend asr 1 in
+    if pos - ridx <= 1 then
       r.rend <- rend
     else
       i.ranges <- {rbegin = rbegin; rend = rend} :: i.ranges
