@@ -211,7 +211,7 @@ let interferences ppf () =
 let interval ppf i =
   let interv ppf =
     List.iter
-      (fun r -> fprintf ppf "@ [%d;%d[" r.rbegin r.rend)
+      (fun r -> fprintf ppf "@ [%d;%d]" r.rbegin r.rend)
       i.ranges in
   fprintf ppf "@[<2>%a:%t@]@." reg i.reg interv
 
