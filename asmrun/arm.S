@@ -26,19 +26,18 @@ alloc_limit     .req    r10
         .globl caml_call_gc
         .type caml_call_gc, %function
 caml_call_gc:
-    /* Record return address and desired size */
+    /* Record return address */
     /* Can use alloc_limit as a temporary since it will be reloaded by
        invoke_gc */
         ldr     alloc_limit, .Lcaml_last_return_address
         str     lr, [alloc_limit, #0]
-        ldr     alloc_limit, .Lcaml_requested_size
-        str     r12, [alloc_limit, #0]
     /* Branch to shared GC code */
         bl      .Linvoke_gc
+    /* Reload return address */
+        ldr     lr, .Lcaml_last_return_address
+        ldr     lr, [lr, #0]
     /* Finish allocation */
-        ldr     r12, .Lcaml_requested_size
-        ldr     r12, [r12, #0]
-        sub     alloc_ptr, alloc_ptr, r12
+        sub     alloc_ptr, alloc_ptr, r7
         bx      lr
 
         .globl caml_alloc1
@@ -48,10 +47,15 @@ caml_alloc1:
         cmp     alloc_ptr, alloc_limit
         movcs   pc, lr                /* Return if alloc_ptr >= alloc_limit */
     /* Record return address */
-        ldr     r12, .Lcaml_last_return_address
-        str     lr, [r12, #0]
+    /* Can use alloc_limit as a temporary since it will be reloaded by
+       invoke_gc */
+        ldr     alloc_limit, .Lcaml_last_return_address
+        str     lr, [alloc_limit, #0]
     /* Invoke GC */
         bl      .Linvoke_gc
+    /* Reload return address */
+        ldr     lr, .Lcaml_last_return_address
+        ldr     lr, [lr, #0]
     /* Try again */
         b       caml_alloc1
 
@@ -62,10 +66,15 @@ caml_alloc2:
         cmp     alloc_ptr, alloc_limit
         movcs   pc, lr                /* Return if alloc_ptr >= alloc_limit */
     /* Record return address */
-        ldr     r12, .Lcaml_last_return_address
-        str     lr, [r12, #0]
+    /* Can use alloc_limit as a temporary since it will be reloaded by
+       invoke_gc */
+        ldr     alloc_limit, .Lcaml_last_return_address
+        str     lr, [alloc_limit, #0]
     /* Invoke GC */
         bl      .Linvoke_gc
+    /* Reload return address */
+        ldr     lr, .Lcaml_last_return_address
+        ldr     lr, [lr, #0]
     /* Try again */
         b       caml_alloc2
 
@@ -76,38 +85,34 @@ caml_alloc3:
         cmp     alloc_ptr, alloc_limit
         movcs   pc, lr                /* Return if alloc_ptr >= alloc_limit */
     /* Record return address */
-        ldr     r12, .Lcaml_last_return_address
-        str     lr, [r12, #0]
+    /* Can use alloc_limit as a temporary since it will be reloaded by
+       invoke_gc */
+        ldr     alloc_limit, .Lcaml_last_return_address
+        str     lr, [alloc_limit, #0]
     /* Invoke GC */
         bl      .Linvoke_gc
+    /* Reload return address */
+        ldr     lr, .Lcaml_last_return_address
+        ldr     lr, [lr, #0]
     /* Try again */
         b       caml_alloc3
 
         .globl caml_allocN
         .type caml_allocN, %function
 caml_allocN:
-        sub     alloc_ptr, alloc_ptr, r12
+        sub     alloc_ptr, alloc_ptr, r7
         cmp     alloc_ptr, alloc_limit
         movcs   pc, lr                /* Return if alloc_ptr >= alloc_limit */
-    /* Record return address and desired size */
-    /* Can use alloc_limit as a temporary since it will be reloaded by
-       invoke_gc */
-        ldr     alloc_limit, .Lcaml_last_return_address
-        str     lr, [alloc_limit, #0]
-        ldr     alloc_limit, .Lcaml_requested_size
-        str     r12, [alloc_limit, #0]
-    /* Invoke GC */
-        bl      .Linvoke_gc
-    /* Try again */
-        ldr     r12, .Lcaml_requested_size
-        ldr     r12, [r12, #0]
-        b       caml_allocN
+    /* Fall-through to caml_call_gc */
+        b       caml_call_gc
 
 /* Shared code to invoke the GC */
 .Linvoke_gc:
     /* Record lowest stack address */
-        ldr     r12, .Lcaml_bottom_of_stack
-        str     sp, [r12, #0]
+    /* Can use alloc_limit as a temporary since it will be reloaded by
+       invoke_gc */
+        ldr     alloc_limit, .Lcaml_bottom_of_stack
+        str     sp, [alloc_limit, #0]
     /* Save integer registers and return address on stack */
         stmfd   sp!, {r0,r1,r2,r3,r4,r5,r6,r7,r12,lr}
     /* Store pointer to saved integer registers in caml_gc_regs */
@@ -123,20 +128,17 @@ caml_allocN:
         bl      caml_garbage_collection
     /* Restore the registers from the stack */
         ldmfd   sp!, {r0,r1,r2,r3,r4,r5,r6,r7,r12}
-    /* Reload return address */
-        ldr     r12, .Lcaml_last_return_address
-        ldr     lr, [r12, #0]
     /* Reload new allocation pointer and allocation limit */
-        ldr     r12, .Lcaml_young_ptr
-        ldr     alloc_ptr, [r12, #0]
-        ldr     r12, .Lcaml_young_limit
-        ldr     alloc_limit, [r12, #0]
+        ldr     alloc_limit, .Lcaml_young_ptr
+        ldr     alloc_ptr, [alloc_limit, #0]
+        ldr     alloc_limit, .Lcaml_young_limit
+        ldr     alloc_limit, [alloc_limit, #0]
     /* Return to caller */
-        ldr     r12, [sp], #4
-        bx      r12
+        ldr     lr, [sp], #4
+        bx      lr
 
 /* Call a C function from Caml */
-/* Function to call is in r12 */
+/* Function to call is in r10 (alloc_limit) */
 
         .globl caml_c_call
         .type caml_c_call, %function
@@ -155,7 +157,7 @@ caml_c_call:
         str     trap_ptr, [r7, #0]
     /* Call the function */
         mov     lr, pc
-        bx      r12
+        bx      r10
     /* Reload alloc ptr and alloc limit */
         ldr     r5, .Lcaml_young_limit
         ldr     alloc_ptr, [r6, #0]    /* r6 still points to caml_young_ptr */
@@ -294,8 +296,8 @@ caml_callback3_exn:
         .globl caml_ml_array_bound_error
         .type caml_ml_array_bound_error, %function
 caml_ml_array_bound_error:
-    /* Load address of [caml_array_bound_error] in r12 */
-        ldr     r12, .Lcaml_array_bound_error
+    /* Load address of [caml_array_bound_error] in r10 */
+        ldr     r10, .Lcaml_array_bound_error
     /* Call that function */
         b       caml_c_call
 
@@ -312,11 +314,6 @@ caml_ml_array_bound_error:
 .Lcaml_apply2:                  .word caml_apply2
 .Lcaml_apply3:                  .word caml_apply3
 .Lcaml_array_bound_error:       .word caml_array_bound_error
-.Lcaml_requested_size:          .word caml_requested_size
-
-        .data
-caml_requested_size:
-        .word 0
 
 /* GC roots for callback */
 
