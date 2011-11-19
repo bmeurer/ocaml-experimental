@@ -77,16 +77,9 @@ let emit_addressing addr r n =
     Iindexed ofs ->
       `[{emit_reg r.(n)}, #{emit_int ofs}]`
 
-(* Record live pointers at call points *)
+(* Record live pointers at call points -- see Emitaux *)
 
-type frame_descr =
-  { fd_lbl: int;                        (* Return address *)
-    fd_frame_size: int;                 (* Size of stack frame *)
-    fd_live_offset: int list }          (* Offsets/regs of live addresses *)
-
-let frame_descriptors = ref([] : frame_descr list)
-
-let record_frame live =
+let record_frame_label live dbg =
   let lbl = new_label() in
   let live_offset = ref [] in
   Reg.Set.iter
@@ -100,18 +93,12 @@ let record_frame live =
   frame_descriptors :=
     { fd_lbl = lbl;
       fd_frame_size = frame_size();
-      fd_live_offset = !live_offset } :: !frame_descriptors;
-  `{emit_label lbl}:`
+      fd_live_offset = !live_offset;
+      fd_debuginfo = dbg } :: !frame_descriptors;
+  lbl
 
-let emit_frame fd =
-  `	.word	{emit_label fd.fd_lbl} + 4\n`;
-  `	.short	{emit_int fd.fd_frame_size}\n`;
-  `	.short	{emit_int (List.length fd.fd_live_offset)}\n`;
-  List.iter
-    (fun n ->
-      `	.short	{emit_int n}\n`)
-    fd.fd_live_offset;
-  `	.align	2\n`
+let record_frame live dbg =
+  let lbl = record_frame_label live dbg in `{emit_label lbl}:\n`
 
 (* Names of various instructions *)
 
@@ -236,11 +223,11 @@ let label_constant tbl s size =
 let emit_constants () =
   Hashtbl.iter
     (fun s lbl ->
-      `{emit_label lbl}:        .word   {emit_symbol s}\n`)
+      `{emit_label lbl}:	.word	{emit_symbol s}\n`)
     symbol_constants;
   Hashtbl.iter
     (fun s lbl ->
-      `{emit_label lbl}:        .double {emit_string s}\n`)
+      `{emit_label lbl}:	.double	{emit_string s}\n`)
     float_constants;
   Hashtbl.clear symbol_constants;
   Hashtbl.clear float_constants;
@@ -285,9 +272,11 @@ let emit_instr i =
         `	ldr	{emit_reg i.res.(0)}, {emit_label lbl} @ {emit_symbol s}\n`; 1
     | Lop(Icall_ind) ->
         `	mov	lr, pc\n`;
-        `{record_frame i.live}  bx	{emit_reg i.arg.(0)}\n`; 2
+        `	bx	{emit_reg i.arg.(0)}\n`;
+        record_frame i.live i.dbg; 2
     | Lop(Icall_imm s) ->
-        `{record_frame i.live}  bl      {emit_symbol s}\n`; 1
+        `	bl      {emit_symbol s}\n`;
+        record_frame i.live i.dbg; 1
     | Lop(Itailcall_ind) ->
         let n = frame_size() in
         if !contains_calls then
@@ -310,7 +299,8 @@ let emit_instr i =
         if alloc then begin
           let lbl = label_constant symbol_constants s 1 in
           `	ldr	r12, {emit_label lbl} @ {emit_symbol s}\n`;
-          `{record_frame i.live}	bl	caml_c_call\n`; 2
+          `	bl	caml_c_call\n`;
+          record_frame i.live i.dbg; 2
         end else begin
           `	bl	{emit_symbol s}\n`; 1
         end
@@ -362,15 +352,18 @@ let emit_instr i =
           let ni = emit_intconst (phys_reg 8 (*r12*)) (Nativeint.of_int n) in
           `	sub	alloc_ptr, alloc_ptr, r12\n`;
           `	cmp	alloc_ptr, alloc_limit\n`;
-          `{record_frame i.live}	blcc    caml_call_gc\n`;
+          `	blcc    caml_call_gc\n`;
+          record_frame i.live i.dbg;
           `	add	{emit_reg i.res.(0)}, alloc_ptr, #4\n`;
           4 + ni
         end else if n = 8 || n = 12 || n = 16 then begin
-          `{record_frame i.live}	bl	caml_alloc{emit_int ((n-4)/4)}\n`;
+          `	bl	caml_alloc{emit_int ((n-4)/4)}\n`;
+          record_frame i.live i.dbg;
           `	add	{emit_reg i.res.(0)}, alloc_ptr, #4\n`; 2
         end else begin
           let ni = emit_intconst (phys_reg 8 (*r12*)) (Nativeint.of_int n) in
-          `{record_frame i.live}	bl	caml_allocN\n`;
+          `	bl	caml_allocN\n`;
+          record_frame i.live i.dbg;
           `	add	{emit_reg i.res.(0)}, alloc_ptr, #4\n`;
           2 + ni
         end
@@ -630,6 +623,13 @@ let end_assembly () =
   `	.data\n`;
   `	.global	{emit_symbol lbl}\n`;
   `{emit_symbol lbl}:\n`;
-  `	.word	{emit_int (List.length !frame_descriptors)}\n`;
-  List.iter emit_frame !frame_descriptors;
-  frame_descriptors := []
+  emit_frames
+    { efa_label = (fun l -> `	.word	{emit_label l}\n`);
+      efa_16 = (fun n -> `	.short	{emit_int n}\n`);
+      efa_32 = (fun n -> `	.word	{emit_int32 n}\n`);
+      efa_word = (fun n -> `	.word	{emit_int n}\n`);
+      efa_align = (fun n -> `	.align	{emit_int(Misc.log2 n)}\n`);
+      efa_label_rel = (fun lbl ofs ->
+                           `	.word	{emit_label lbl} - . + {emit_int32 ofs}\n`);
+      efa_def_label = (fun l -> `{emit_label l}:\n`);
+      efa_string = (fun s -> emit_string_directive "	.asciz	" s) }
