@@ -35,9 +35,9 @@ caml_call_gc:
     /* Branch to shared GC code */
         bl      .Linvoke_gc
     /* Finish allocation */
-	ldr	r12, .Lcaml_requested_size
-	ldr	r12, [r12, #0]
-	sub	alloc_ptr, alloc_ptr, r12
+        ldr     r12, .Lcaml_requested_size
+        ldr     r12, [r12, #0]
+        sub     alloc_ptr, alloc_ptr, r12
         bx      lr
 
         .globl caml_alloc1
@@ -94,8 +94,8 @@ caml_allocN:
     /* Invoke GC */
         bl      .Linvoke_gc
     /* Try again */
-	ldr	r12, .Lcaml_requested_size
-	ldr	r12, [r12, #0]
+        ldr     r12, .Lcaml_requested_size
+        ldr     r12, [r12, #0]
         b       caml_allocN
 
 /* Shared code to invoke the GC */
@@ -220,7 +220,7 @@ caml_start_program:
         str     alloc_ptr, [r4, #0]
     /* Reload callee-save registers and return */
         ldmfd   sp!, {r4,r5,r6,r7,r8,r10,r11,lr}
-	bx	lr
+        bx      lr
 
     /* The trap handler */
 .Ltrap_handler:
@@ -302,9 +302,9 @@ caml_ml_array_bound_error:
 .Lcaml_array_bound_error:       .word caml_array_bound_error
 .Lcaml_requested_size:          .word caml_requested_size
 
-	.data
+        .data
 caml_requested_size:
-	.word	0
+        .word 0
 
 /* GC roots for callback */
 
