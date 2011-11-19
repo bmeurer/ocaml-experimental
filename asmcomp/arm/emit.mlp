@@ -275,7 +275,7 @@ let emit_instr i =
         `	bx	{emit_reg i.arg.(0)}\n`;
         record_frame i.live i.dbg; 2
     | Lop(Icall_imm s) ->
-        `	bl      {emit_symbol s}\n`;
+        `	bl	{emit_symbol s}\n`;
         record_frame i.live i.dbg; 1
     | Lop(Itailcall_ind) ->
         let n = frame_size() in
