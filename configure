@@ -636,6 +636,7 @@ if test $withsharedlibs = "yes"; then
     i[345]86-*-netbsd*)           natdynlink=true;;
     x86_64-*-netbsd*)             natdynlink=true;;
     i386-*-gnu0.3)                natdynlink=true;;
+    arm*-*-linux*)                natdynlink=true;;
   esac
 fi
 
