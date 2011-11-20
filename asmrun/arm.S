@@ -23,24 +23,11 @@ alloc_limit     .req    r10
 
 /* Allocation functions and GC interface */
 
-        .globl caml_call_gc
-caml_call_gc:
-    /* Record return address and desired size */
-    /* Can use alloc_limit as a temporary since it will be reloaded by
-       invoke_gc */
-        ldr     alloc_limit, .Lcaml_last_return_address
-        str     lr, [alloc_limit, #0]
-        ldr     alloc_limit, .Lcaml_requested_size
-        str     r12, [alloc_limit, #0]
-    /* Branch to shared GC code */
-        bl      .Linvoke_gc
-    /* Finish allocation */
-	ldr	r12, .Lcaml_requested_size
-	ldr	r12, [r12, #0]
-	sub	alloc_ptr, alloc_ptr, r12
-        bx      lr
+/* Allocate 8 bytes in minor heap */
+/* PIC safe */
 
         .globl caml_alloc1
+        .type caml_alloc1, %function
 caml_alloc1:
         sub     alloc_ptr, alloc_ptr, #8
         cmp     alloc_ptr, alloc_limit
@@ -53,7 +40,11 @@ caml_alloc1:
     /* Try again */
         b       caml_alloc1
 
+/* Allocate 12 bytes in minor heap */
+/* PIC safe */
+
         .globl caml_alloc2
+        .type caml_alloc2, %function
 caml_alloc2:
         sub     alloc_ptr, alloc_ptr, #12
         cmp     alloc_ptr, alloc_limit
@@ -66,7 +57,11 @@ caml_alloc2:
     /* Try again */
         b       caml_alloc2
 
+/* Allocate 16 bytes in minor heap */
+/* PIC safe */
+
         .globl caml_alloc3
+        .type caml_alloc3, %function
 caml_alloc3:
         sub     alloc_ptr, alloc_ptr, #16
         cmp     alloc_ptr, alloc_limit
@@ -79,11 +74,24 @@ caml_alloc3:
     /* Try again */
         b       caml_alloc3
 
+/* Allocate N bytes in minor heap */
+/* Number of bytes is in r12 (preserved) */
+/* Not PIC safe */
+
         .globl caml_allocN
+        .type caml_allocN, %function
 caml_allocN:
         sub     alloc_ptr, alloc_ptr, r12
         cmp     alloc_ptr, alloc_limit
         movcs   pc, lr                /* Return if alloc_ptr >= alloc_limit */
+
+/* Call GC and allocate N bytes in minor heap */
+/* Number of bytes is in r12 (preserved) */
+/* Not PIC safe */
+
+        .globl caml_call_gc
+        .type caml_call_gc, %function
+caml_call_gc:
     /* Record return address and desired size */
     /* Can use alloc_limit as a temporary since it will be reloaded by
        invoke_gc */
@@ -91,12 +99,23 @@ caml_allocN:
         str     lr, [alloc_limit, #0]
         ldr     alloc_limit, .Lcaml_requested_size
         str     r12, [alloc_limit, #0]
-    /* Invoke GC */
+    /* Branch to shared GC code */
         bl      .Linvoke_gc
-    /* Try again */
-	ldr	r12, .Lcaml_requested_size
-	ldr	r12, [r12, #0]
-        b       caml_allocN
+    /* Finish allocation */
+        ldr     r12, .Lcaml_requested_size
+        ldr     r12, [r12, #0]
+        sub     alloc_ptr, alloc_ptr, r12
+        bx      lr
+
+/* Invoke the GC */
+/* PIC safe */
+
+        .globl caml_invoke_gc
+        .type caml_invoke_gc, %function
+caml_invoke_gc:
+    /* Record return address */
+        ldr     r12, .Lcaml_last_return_address
+        str     lr, [r12, #0]
 
 /* Shared code to invoke the GC */
 .Linvoke_gc:
@@ -132,9 +151,20 @@ caml_allocN:
 
 /* Call a C function from Caml */
 /* Function to call is in r12 */
+/* Not PIC safe */
 
         .globl caml_c_call
+        .type caml_c_call, %function
 caml_c_call:
+        mov     r10, r12
+
+/* Invoke a C function from Caml (PIC) */
+/* Function to call is in r10 (alloc_limit) */
+/* PIC safe */
+
+        .globl caml_c_invoke
+        .type caml_c_invoke, %function
+caml_c_invoke:
     /* Preserve return address in callee-save register r4 */
         mov     r4, lr
     /* Record lowest stack address and return address */
@@ -149,7 +179,7 @@ caml_c_call:
         str     trap_ptr, [r7, #0]
     /* Call the function */
         mov     lr, pc
-        bx      r12
+        bx      r10
     /* Reload alloc ptr and alloc limit */
         ldr     r5, .Lcaml_young_limit
         ldr     alloc_ptr, [r6, #0]    /* r6 still points to caml_young_ptr */
@@ -158,8 +188,10 @@ caml_c_call:
         bx      r4
 
 /* Start the Caml program */
+/* PIC safe */
 
         .globl caml_start_program
+        .type caml_start_program, %function
 caml_start_program:
         ldr     r12, .Lcaml_program
 
@@ -220,7 +252,7 @@ caml_start_program:
         str     alloc_ptr, [r4, #0]
     /* Reload callee-save registers and return */
         ldmfd   sp!, {r4,r5,r6,r7,r8,r10,r11,lr}
-	bx	lr
+        bx      lr
 
     /* The trap handler */
 .Ltrap_handler:
@@ -233,14 +265,16 @@ caml_start_program:
         b       .Lreturn_result
 
 /* Raise an exception from C */
+/* PIC safe */
 
         .globl caml_raise_exception
+        .type caml_raise_exception, %function
 caml_raise_exception:
     /* Reload Caml allocation pointers */
-        ldr     r12, .Lcaml_young_ptr
-        ldr     alloc_ptr, [r12, #0]
-        ldr     r12, .Lcaml_young_limit
-        ldr     alloc_limit, [r12, #0]
+        ldr     alloc_ptr, .Lcaml_young_ptr
+        ldr     alloc_limit, .Lcaml_young_limit
+        ldr     alloc_ptr, [alloc_ptr, #0]
+        ldr     alloc_limit, [alloc_limit, #0]
     /* Cut stack at current trap handler */
         ldr     r12, .Lcaml_exception_pointer
         ldr     sp, [r12, #0]
@@ -250,6 +284,7 @@ caml_raise_exception:
 /* Callback from C to Caml */
 
         .globl caml_callback_exn
+        .type caml_callback_exn, %function
 caml_callback_exn:
     /* Initial shuffling of arguments (r0 = closure, r1 = first arg) */
         mov     r12, r0
@@ -259,6 +294,7 @@ caml_callback_exn:
         b       .Ljump_to_caml
 
         .globl caml_callback2_exn
+        .type caml_callback2_exn, %function
 caml_callback2_exn:
     /* Initial shuffling of arguments (r0 = closure, r1 = arg1, r2 = arg2) */
         mov     r12, r0
@@ -269,6 +305,7 @@ caml_callback2_exn:
         b       .Ljump_to_caml
 
         .globl caml_callback3_exn
+        .type caml_callback3_exn, %function
 caml_callback3_exn:
     /* Initial shuffling of arguments */
     /* (r0 = closure, r1 = arg1, r2 = arg2, r3 = arg3) */
@@ -281,11 +318,12 @@ caml_callback3_exn:
         b       .Ljump_to_caml
 
         .globl caml_ml_array_bound_error
+        .type caml_ml_array_bound_error, %function
 caml_ml_array_bound_error:
-    /* Load address of [caml_array_bound_error] in r12 */
-        ldr     r12, .Lcaml_array_bound_error
+    /* Load address of [caml_array_bound_error] in r10 */
+        ldr     r10, .Lcaml_array_bound_error
     /* Call that function */
-        b       caml_c_call
+        b       caml_c_invoke
 
 /* Global references */
 
@@ -302,9 +340,9 @@ caml_ml_array_bound_error:
 .Lcaml_array_bound_error:       .word caml_array_bound_error
 .Lcaml_requested_size:          .word caml_requested_size
 
-	.data
+        .data
 caml_requested_size:
-	.word	0
+        .word 0
 
 /* GC roots for callback */
 
