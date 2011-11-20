@@ -120,7 +120,7 @@ let destroyed_at_c_call =               (* r4-r7 preserved *)
 let destroyed_at_oper = function
     Iop(Icall_ind | Icall_imm _ | Iextcall(_, true)) -> all_phys_regs
   | Iop(Iextcall(_, false)) -> destroyed_at_c_call
-  | Iop(Ialloc(_)) -> [|phys_reg 7; phys_reg 8|]    (* r7 and r12 destroyed *)
+  | Iop(Ialloc(_)) -> [|phys_reg 8|]    (* r12 destroyed *)
   | _ -> [||]
 
 let destroyed_at_raise = all_phys_regs
