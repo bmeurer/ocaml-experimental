@@ -739,7 +739,7 @@ clean::
 	$(CAMLC) $(COMPFLAGS) -c $<
 
 .ml.cmx:
-	$(CAMLOPT) $(COMPFLAGS) -c $<
+	$(CAMLOPT) $(COMPFLAGS) -nodynlink -c $<
 
 partialclean::
 	for d in utils parsing typing bytecomp asmcomp driver toplevel tools; \
